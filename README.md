@@ -8,7 +8,12 @@
 [![Tested with](https://img.shields.io/badge/tested_with-Claude_Code_2.1.296-0d0d0f?style=flat-square)](#compatibility)
 [![License: MIT](https://img.shields.io/badge/license-MIT-8a877f?style=flat-square)](LICENSE)
 
+<img src="docs/media/mascots.png" alt="The four mascots: general-purpose (coral, with an antenna), Explore (teal, with feelers), Plan (violet, with a cap) and a custom agent type (amber, with a sprout)" width="560">
+
+<!-- The recording goes here once it is made in a real session (about 100 columns: three agents
+spawning, one celebrating, one failing):
 <img src="docs/media/crew.gif" alt="Claude delegates to three subagents; the crew pane shows each one with an animated mascot, its model, a context bar, tokens, estimated cost and time, and files them under Finished as they end" width="800">
+-->
 
 </div>
 
@@ -17,35 +22,30 @@ ones are still going, on which model, how full their context is, what they have 
 Crew puts all of it in one pane — stat cards for the session, a card per running agent,
 a list of the ones that finished — and a one-line band above the prompt while anything runs.
 
-### Meet the crew
-
-<img src="docs/media/mascots.png" alt="The four mascots: general-purpose (coral, with an antenna), Explore (teal, with feelers), Plan (violet, with a cap) and a custom agent type (amber, with a sprout)" width="560">
-
 ```text
-◆ crew · 1 running · 15 done · 1 failed
+◆ crew · 1 running · 3 done · 1 failed
 
-╭──────────────────╮ ╭──────────────────╮ ╭──────────────────╮
-│ Cost             │ │ Tokens           │ │ Time             │
-│ $0.41            │ │ 206.5k           │ │ 12:18            │
-╰──────────────────╯ ╰──────────────────╯ ╰──────────────────╯
+╭──────────────────╮ ╭──────────────────╮ ╭────────────────────╮
+│ Cost             │ │ Tokens           │ │ Time               │
+│ ≈$1.15           │ │ 948.7k           │ │ 12:18              │
+╰──────────────────╯ ╰──────────────────╯ ╰────────────────────╯
 
 RUNNING · 1
-
-  ▀▄   ▄▀   Scan the repo for TODO markers                   ●
+  ▀▄   ▄▀   Scan the repo for TODO markers                     ●
   ▄█████▄   Explore · haiku 4.5 · high · step 7 · Bash
- █▀▀█▀▀███  ━━━━━━━━─────────────────────────────── ctx 21%
-▀█▄▄▀▄▄███▄ 209.0k tok · 12 tools · ≈$0.04 · 5:35
+ █████████  ━━━━━━━━━─────────────────────────────────── ctx 21%
+▀█████████▄ 207.5k tok · 12 tools · ≈$0.05 · 5:35
   █▀▀▀▀█▀
 
-FINISHED · 16                                      c: Collapse
-✓ Map the API routes         haiku 4.5 · 52.0k · ≈$0.31 · 2:10
-✓ Draft the migration plan    opus 5.5 · 88.1k · ≈$0.74 · 3:02
-✗ Run the flaky test suite sonnet 4.5 · 118.4k · ≈$0.62 · 4:51
-✓ Review the auth module    sonnet 4.5 · 61.7k · ≈$0.29 · 1:48
-…
+FINISHED · 4                                         c: Collapse
+✓ Review the auth module      sonnet 4.5 · 61.7k · ≈$0.08 · 1:48
+✗ Run the flaky tests        sonnet 4.5 · 118.4k · ≈$0.12 · 4:51
+✓ Draft the migration plan      opus 5.5 · 88.1k · ≈$0.29 · 3:02
+✓ Map the API routes           haiku 4.5 · 52.0k · ≈$0.02 · 2:10
 ```
 
-*(In the terminal the mascot is drawn in full color, two pixels per cell.)*
+*(In the terminal the mascot is drawn in full color, two pixels per cell. The Cost card here
+is crew's estimate, marked `≈`: the main loop's share plus each agent's.)*
 
 ## Install
 
@@ -69,7 +69,8 @@ Then start a new session, or run `/reload-plugins`. Crew is also listed in my
   type, model, effort, step count and last tool; a thin bar for how full its context is;
   and its tokens, tool calls, estimated cost and time. An agent that finishes stays here
   for three seconds to celebrate (`✓`) or droop (`✗` failed, `■` stopped), then moves on.
-  Past 30 cards, one line says how many more run.
+  Past 30 cards, one line says how many more run. When nothing runs, the idle mascot is
+  back with a line saying so.
 - **Finished** — newest first, with `✓`, `✗` or `■`, the model, tokens, cost and time.
   Its `c: Collapse` button folds it and `e: Expand` unfolds it; the choice sticks across
   sessions. Past 50 rows, one line says how many more.
@@ -85,7 +86,8 @@ for a pane nobody asked for (144 columns); otherwise a toast says to run `/crew`
 
 ## The mascots
 
-Every agent type gets its own head piece and coat, so a glance tells them apart.
+Each built-in agent type has its own head piece and coat. Custom types share the sprout and
+take one of four coats by name, so a glance tells most of them apart.
 
 | Agent type | Head piece | Coat |
 |---|---|---|
@@ -100,11 +102,14 @@ Every agent type gets its own head piece and coat, so a glance tells them apart.
 |---|---|---|
 | idle | the empty pane | blinks now and then |
 | working | the agent runs | looks left and right, taps, steps; its tip pulses |
-| done | it finished | hops with its hands up while sparkles twinkle |
+| done | it finished | throws its hands up and cheers while sparkles twinkle |
 | failed | it failed or was stopped | turns grey and droops; a tear rolls down |
 
-Every pose plays at four frames a second. The pixel art is original and lives in
-[`hooks/sprites.ts`](hooks/sprites.ts) as plain strings.
+Every pose plays at four frames a second, each agent from its own point in the loop. The
+pieces that stand on the terminal's background (head pieces, feet, tips, sparkles) keep to
+middle tones, so they show on dark and light themes alike. The pixel art is original:
+[`hooks/sprites.ts`](hooks/sprites.ts) draws every frame from a few pixel rules per head
+piece and pose.
 
 ## Commands
 
@@ -151,11 +156,13 @@ The built-in table, in $ per million tokens:
 - **Context %** is the agent's last request (input plus cache) over its model's window:
   the session's window when the agent runs the main model, a million for a `[1m]` model,
   200k otherwise. It says how full the agent's context is; it is not progress.
-- **Time** runs from the spawn and stops when the agent ends. A teammate that works again
-  picks up where its clock stopped.
+- **Time** runs from the spawn and stops when the agent ends. An agent that works again (a
+  teammate's next turn, or a stopped agent resumed) picks up where its clock stopped.
 - **Failures and kills** that no turn end reports are picked up from Claude Code's agent
-  list every two seconds while an agent runs. Agents started by a workflow are never in
-  that list; they are not marked failed for it.
+  list every two seconds while an agent runs; so is the end of a turn of a teammate in a
+  terminal pane of its own. Agents started by a workflow are never in that list; they are
+  not marked failed for it. One that the list never shows and that has not been heard from
+  for 30 minutes counts as stopped, so the band does not run for the rest of the session.
 
 ## Privacy
 
@@ -184,7 +191,7 @@ A drawing has a size limit, so with many agents at once only the first ones get 
 
 ```bash
 claude plugin validate --strict .   # manifest, hooks and calls
-claude plugin test .                 # 81 tests, no session or sign-in needed
+claude plugin test .                 # 107 tests, no session or sign-in needed
 claude --plugin-dir .                # try it in a session; edits hot-reload
 ```
 
