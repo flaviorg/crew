@@ -28,11 +28,24 @@ type Stubs = {
   usage: any
   answer: any
   broken: boolean
+  periods: number
+}
+
+type StubOptions = {
+  placed?: boolean
+  list?: any[]
+  cost?: number
+  store?: Record<string, unknown>
+  /** Answer `$.ui.panes()` or `$.ui.close()` with a refusal. */
+  deny?: ('ui.panes' | 'ui.close')[]
+  /** Refuse the first `clock.every` period, which ends that interval. */
+  refuseFirstPeriod?: boolean
 }
 
 // Everything the mod may call on $, answered in memory, plus the engine beneath its hooks.
-function stubs(on: any, o: { placed?: boolean; list?: any[]; cost?: number; store?: Record<string, unknown> } = {}): Stubs {
-  const s: Stubs = { clock: null, opens: [], closes: [], toasts: [], stored: { ...(o.store ?? {}) }, usage: USAGE, answer: null, broken: false }
+function stubs(on: any, o: StubOptions = {}): Stubs {
+  const s: Stubs = { clock: null, opens: [], closes: [], toasts: [], stored: { ...(o.store ?? {}) }, usage: USAGE, answer: null, broken: false, periods: 0 }
+  const deny = new Set(o.deny ?? [])
   const open = new Set<string>()
   let n = 0
   on('session.usage', () => ({ value: { startedAt: 0, context: { window: 200_000 }, rateLimits: [], ...(o.cost === undefined ? {} : { cost: { usd: o.cost } }) } }))
@@ -43,15 +56,36 @@ function stubs(on: any, o: { placed?: boolean; list?: any[]; cost?: number; stor
     open.add(e.id)
     return { value: o.placed === false ? { isPlaced: false, reason: 'the terminal is 100 columns; 144 are needed' } : { isPlaced: true } }
   })
-  on('ui.close', ($: any, e: any) => { s.closes.push(e.id); open.delete(e.id); return { value: undefined } })
-  on('ui.panes', () => ({
-    value: [...open].map((id) => ({ id, title: 'Crew', isShown: o.placed !== false, isFocused: false, isPlaced: o.placed !== false })),
-  }))
+  on('ui.close', ($: any, e: any) => {
+    s.closes.push(e.id)
+    if (deny.has('ui.close')) return { deny: 'kept open' }
+    open.delete(e.id)
+    return { value: undefined }
+  })
+  on('ui.panes', () =>
+    deny.has('ui.panes')
+      ? { deny: 'panes down' }
+      : { value: [...open].map((id) => ({ id, title: 'Crew', isShown: o.placed !== false, isFocused: false, isPlaced: o.placed !== false })) })
   on('ui.toast', ($: any, e: any) => { s.toasts.push(e.text); return { value: undefined } })
   on('command.register', () => ({ value: { command: 'crew' } }))
   on('store.get', ($: any, e: any) => ({ value: s.stored[e.key] }))
   on('store.set', ($: any, e: any) => { s.stored[e.key] = e.value; return { value: undefined } })
-  s.clock = mock.clock(on, { now: 0 })
+  // mock.clock answers the timers; this wrapper counts each clock.every period it is asked
+  // for, and can refuse the first one.
+  let refuse = o.refuseFirstPeriod === true
+  const counted = (event: string, ...rest: any[]) => {
+    const fn = rest[rest.length - 1]
+    if (event !== 'clock.every') return on(event, ...rest)
+    return on(event, ...rest.slice(0, -1), (...a: any[]) => {
+      s.periods++
+      if (refuse) {
+        refuse = false
+        return { deny: 'period refused' }
+      }
+      return fn(...a)
+    })
+  }
+  s.clock = mock.clock(counted as any, { now: 0 })
   on('agent.spawn', () => s.answer ?? { model: 'claude-haiku-4-5', agentId: 'ag-' + ++n })
   on('tool.call', () => ({ result: 'ok' }))
   on('turn.step', async function* ($: any, e: any) {
@@ -375,6 +409,49 @@ test('/crew toggles', async ($, on) => {
   expect(s.closes).toEqual(['crew'])
   await $.command.run({ command: 'crew', args: '' })
   expect(s.opens).toHaveLength(2)
+})
+
+test('/crew opens the pane when the pane list cannot be read', async ($, on) => {
+  const s = stubs(on, { deny: ['ui.panes'] })
+  expect(await $.command.run({ command: 'crew', args: '' })).toEqual({})
+  expect(s.opens).toEqual([{ id: 'crew', title: 'Crew', columns: 60 }])
+})
+
+test('/crew answers in words when the pane cannot be closed', async ($, on) => {
+  const s = stubs(on, { deny: ['ui.close'] })
+  await $.command.run({ command: 'crew', args: '' })
+  const answer: any = await $.command.run({ command: 'crew', args: '' })
+  expect(s.closes).toEqual(['crew'])
+  expect(answer.text).toMatch(/^crew: /)
+})
+
+test('the clock comes back after a refused period', async ($, on) => {
+  const s = stubs(on, { refuseFirstPeriod: true })
+  await spawn($, 'Scan the repo')
+  const ui: any = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const before = (await ui.find({ type: 'Raster' })).props.cells
+  await s.clock.advance(1_000)
+  // A refused period ends an interval without a word; the next spawn or drawing notices.
+  await spawn($, 'Plan it', 'Plan')
+  await s.clock.advance(500)
+  expect((await ui.find({ type: 'Raster', key: 'm:ag-1' })).props.cells).not.toBe(before)
+  // And it still files agents away and clears the band.
+  await complete($, 'ag-1')
+  await complete($, 'ag-2')
+  await s.clock.advance(10_000)
+  const band: any = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ text: /◆ crew/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'FINISHED · 2' })).toBeDefined()
+})
+
+test('the clock stops when nothing is live and the pane list cannot be read', { options: { autoOpen: 'off' } }, async ($, on) => {
+  const s = stubs(on, { deny: ['ui.panes'] })
+  await spawn($, 'Scan the repo')
+  await complete($, 'ag-1')
+  await s.clock.advance(5_000)
+  const periods = s.periods
+  await s.clock.advance(60_000)
+  expect(s.periods - periods).toBeLessThan(4)
 })
 
 test('collapse sticks', async ($, on) => {

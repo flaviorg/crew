@@ -29,6 +29,8 @@ const RUNNING_CAP = 30
 const BAND_DOTS = 8
 /** Ticks between two looks at $.agent.list(): every 2 s while an agent runs. */
 const RECONCILE_EVERY = 8
+/** With no period for this long, the interval is gone: a refused period ends it silently. */
+const STALL_MS = 4 * FRAME_MS
 
 type Options = { autoOpen: 'on' | 'off'; band: 'on' | 'off'; mascot: 'on' | 'off'; prices: string }
 type View = { width: number; window: number; mainModel: string; now: number; art: { left: number } }
@@ -41,6 +43,7 @@ let overrides: Record<string, Price> = {}
 // Throwaway values: nothing here needs to survive a reload.
 let frame = 0 // the animation frame, one per FRAME_MS
 let ticker: { cancel(): void } | null = null
+let beat = { at: 0, frame: 0 } // the last time ensureTicker saw the frame counter, and its value
 let busy = false // a tick still waiting on the host makes the next one skip its work
 let wasLive = false // so the tick after the last agent files away redraws once more
 let paneShown = true // as last seen by the ticker
@@ -52,9 +55,17 @@ let collapsed = false // the Finished section, folded; kept in $.store so the ch
 // One clock drives everything that moves: every frame while an agent is live (4 a second,
 // under the redraw cap), once a second for the Time card while only the pane is shown,
 // and nothing at all otherwise.
-function ensureTicker($: any) {
+//
+// A refused period ends an interval and its handle does not say so. Whoever calls this
+// passes the time: when no period has come for STALL_MS, the old interval is replaced.
+function ensureTicker($: any, now: number) {
+  if (ticker && now - beat.at >= STALL_MS) {
+    if (frame === beat.frame) stopTicker()
+    beat = { at: now, frame }
+  }
   if (ticker) return
   paneShown = true
+  beat = { at: now, frame }
   try {
     ticker = $.clock.every(FRAME_MS, () => onTick($))
   } catch {
@@ -63,8 +74,27 @@ function ensureTicker($: any) {
 }
 
 function stopTicker() {
-  ticker?.cancel()
+  try {
+    ticker?.cancel()
+  } catch {}
   ticker = null
+}
+
+async function clockNow($: any): Promise<number> {
+  try {
+    return await $.clock.now()
+  } catch {
+    return beat.at
+  }
+}
+
+// Whether crew's pane is shown; null when the host cannot say.
+async function paneIsShown($: any): Promise<boolean | null> {
+  try {
+    return (await $.ui.panes()).some((p: any) => p.id === PANE && p.isShown)
+  } catch {
+    return null
+  }
 }
 
 async function onTick($: any) {
@@ -79,7 +109,8 @@ async function onTick($: any) {
     wasLive = isLive
     if (isLive) return
     if (frame % 4 === 0) {
-      paneShown = (await $.ui.panes()).some((p: any) => p.id === PANE && p.isShown)
+      // A pane list the host cannot give counts as no pane: the clock stops, not spins.
+      paneShown = (await paneIsShown($)) === true
       if (!paneShown) return stopTicker()
     }
     // The empty pane's idle mascot blinks: draw just the frames where it changes.
@@ -113,7 +144,7 @@ async function openPane($: any) {
   try {
     await $.ui.open(OPEN)
   } catch {}
-  ensureTicker($)
+  ensureTicker($, await clockNow($))
 }
 
 // The first spawn opens the pane by itself. Unasked, a pane is seated only on a wide
@@ -332,7 +363,7 @@ async function drawPane($: any, e: any) {
   const values = cards({ realUsd: usage?.cost?.usd ?? null, estUsd: sum.estUsd, tokens: sum.tokens, sessionMs: now - startedAt })
   const running = live(r, now)
   const done = finished(r, now)
-  ensureTicker($)
+  ensureTicker($, now)
   return Box({
     flexDirection: 'column',
     children: [
@@ -355,7 +386,7 @@ async function drawBand($: any, e: any, next: any) {
   const now = await $.clock.now()
   const agents = live(r, now)
   if (agents.length === 0) return next(e)
-  ensureTicker($)
+  ensureTicker($, now)
   const { Box, Text, Button } = $.ui.resolve(e)
   const dots = agents.slice(0, BAND_DOTS).map((a) =>
     Text({ color: paletteFor(a.type, poseOf(a)).b!, children: [a.status === 'running' && frame % 2 === 1 ? '◉' : '●'] }),
@@ -407,7 +438,7 @@ export function register(on: any, options: any) {
         at,
       }
       await update($, rosterAtom, (x) => spawned(x, row))
-      ensureTicker($)
+      ensureTicker($, at)
       await autoOpen($)
     }
     return r
@@ -437,17 +468,19 @@ export function register(on: any, options: any) {
     if (e.agentId) {
       const at = await $.clock.now()
       await update($, rosterAtom, (x) => completed(x, e.agentId, { at, reason: e.reason, isAborted: e.isAborted, turnId: e.turnId }))
-      ensureTicker($) // the celebration needs frames
+      ensureTicker($, at) // the celebration needs frames
     }
     return next(e)
   }).catch(($: any, e: any, next: any) => next(e))
 
+  // Hides the pane when it is shown; otherwise opens it (or seats one waiting undrawn). When
+  // the pane list cannot be read, opening is the useful guess. A registered command has no
+  // core beneath it, so a failure answers in words instead of passing on.
   on('command.run', { command: 'crew' }, async ($: any) => {
-    const shown = (await $.ui.panes()).some((p: any) => p.id === PANE && p.isShown)
-    if (shown) await $.ui.close({ id: PANE })
+    if ((await paneIsShown($)) === true) await $.ui.close({ id: PANE })
     else await openPane($)
     return {}
-  }).catch(($: any, e: any, next: any) => next(e))
+  }).catch(($: any, e: any, next: any) => (next.called ? next(e) : { text: 'crew: could not show or hide the panel' }))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($: any, e: any) => drawPane($, e))
 
