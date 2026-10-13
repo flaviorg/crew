@@ -75,7 +75,8 @@ Then start a new session, or run `/reload-plugins`. Crew is also listed in my
   Its `c: Collapse` button folds it and `e: Expand` unfolds it; the choice sticks across
   sessions. Past 50 rows, one line says how many more.
 - **The band** — while anything runs, one line above the prompt: a dot per agent in its
-  mascot's color, how many run, for how long, and their cost. `o: Open` opens the pane.
+  mascot's color, how many run, for how long, and their cost. `o: Open` opens the pane,
+  or brings it to the front.
 
   ```text
   ◆ crew ●● 2 running · 0:42 · ≈$0.18  o: Open
@@ -116,6 +117,8 @@ piece and pose.
 | Command | What it does |
 |---|---|
 | `/crew` | Shows the pane, or hides it when it is showing |
+
+In fullscreen the dock shows one pane at a time as tabs; `/crew` brings crew's to the front.
 
 ## Options
 
@@ -191,7 +194,7 @@ A drawing has a size limit, so with many agents at once only the first ones get 
 
 ```bash
 claude plugin validate --strict .   # manifest, hooks and calls
-claude plugin test .                 # 107 tests, no session or sign-in needed
+claude plugin test .                 # 111 tests, no session or sign-in needed
 claude --plugin-dir .                # try it in a session; edits hot-reload
 ```
 
