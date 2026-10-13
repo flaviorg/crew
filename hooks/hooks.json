@@ -1,0 +1,4 @@
+{
+  "description": "The crew hooks module",
+  "modules": ["./register.ts"]
+}

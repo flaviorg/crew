@@ -1,0 +1,14 @@
+{
+  "name": "crew",
+  "owner": { "name": "flaviorg", "url": "https://github.com/flaviorg" },
+  "metadata": { "description": "Crew — a Claude Code mod with a live panel of the subagents Claude delegates to." },
+  "plugins": [
+    {
+      "name": "crew",
+      "source": "./",
+      "description": "Mod: every subagent Claude delegates to, live — animated mascot, model, context, tokens, estimated cost and time.",
+      "version": "0.1.0",
+      "category": "mod"
+    }
+  ]
+}

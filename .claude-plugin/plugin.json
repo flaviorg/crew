@@ -1,0 +1,39 @@
+{
+  "name": "crew",
+  "version": "0.1.0",
+  "description": "A live panel of the subagents Claude delegates to: model, context, tokens, cost and time, each with an animated mascot.",
+  "author": { "name": "flaviorg", "url": "https://github.com/flaviorg" },
+  "repository": "https://github.com/flaviorg/crew",
+  "license": "MIT",
+  "keywords": ["mod", "agents", "subagents", "cost", "tokens", "dashboard"],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "autoOpen": {
+      "type": "string",
+      "title": "Open automatically",
+      "description": "Open the panel when Claude first delegates to a subagent (if the terminal is wide enough).",
+      "default": "on",
+      "options": ["on", "off"]
+    },
+    "band": {
+      "type": "string",
+      "title": "Band above the prompt",
+      "description": "Show a one-line summary above the prompt while subagents run.",
+      "default": "on",
+      "options": ["on", "off"]
+    },
+    "mascot": {
+      "type": "string",
+      "title": "Mascots",
+      "description": "Draw the animated mascots.",
+      "default": "on",
+      "options": ["on", "off"]
+    },
+    "prices": {
+      "type": "string",
+      "title": "Price overrides",
+      "description": "JSON overriding the price table, $ per million tokens, e.g. {\"opus\":{\"input\":5,\"output\":25,\"cacheRead\":0.5,\"cacheWrite\":6.25}}",
+      "default": ""
+    }
+  }
+}
