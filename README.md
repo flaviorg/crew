@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/media/banner.png" alt="crew: a Claude Code mod with a live panel of the subagents Claude delegates to, and its four pixel mascots" width="100%">
+
 # ◆ crew
 
 **A Claude Code mod with a live panel of the subagents Claude delegates to — each with its own animated pixel mascot.**
@@ -10,10 +12,9 @@
 
 <img src="docs/media/mascots.png" alt="The four mascots: general-purpose (coral, with an antenna), Explore (teal, with feelers), Plan (violet, with a cap) and a custom agent type (amber, with a sprout)" width="560">
 
-<!-- The recording goes here once it is made in a real session (about 100 columns: three agents
-spawning, one celebrating, one failing):
-<img src="docs/media/crew.gif" alt="Claude delegates to three subagents; the crew pane shows each one with an animated mascot, its model, a context bar, tokens, estimated cost and time, and files them under Finished as they end" width="800">
--->
+<img src="docs/media/crew.gif" alt="Claude delegates to four subagents; the crew pane shows each one with its animated mascot, model, context bar, tokens, estimated cost and time, and files them under Finished as they end" width="900">
+
+<sub>An animation of the pane, drawn with crew's own sprites and layout; the clock runs 20× faster than a real session.</sub>
 
 </div>
 
