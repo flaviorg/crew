@@ -1,0 +1,203 @@
+<div align="center">
+
+# ◆ crew
+
+**A Claude Code mod with a live panel of the subagents Claude delegates to — each with its own animated pixel mascot.**
+
+[![Claude Code mod](https://img.shields.io/badge/Claude_Code-mod-9B7BEA?style=flat-square)](https://code.claude.com/docs/en/plugins/mods/overview)
+[![Tested with](https://img.shields.io/badge/tested_with-Claude_Code_2.1.296-0d0d0f?style=flat-square)](#compatibility)
+[![License: MIT](https://img.shields.io/badge/license-MIT-8a877f?style=flat-square)](LICENSE)
+
+<img src="docs/media/crew.gif" alt="Claude delegates to three subagents; the crew pane shows each one with an animated mascot, its model, a context bar, tokens, estimated cost and time, and files them under Finished as they end" width="800">
+
+</div>
+
+When Claude hands work to subagents, the transcript tells you little while they run: which
+ones are still going, on which model, how full their context is, what they have cost.
+Crew puts all of it in one pane — stat cards for the session, a card per running agent,
+a list of the ones that finished — and a one-line band above the prompt while anything runs.
+
+### Meet the crew
+
+<img src="docs/media/mascots.png" alt="The four mascots: general-purpose (coral, with an antenna), Explore (teal, with feelers), Plan (violet, with a cap) and a custom agent type (amber, with a sprout)" width="560">
+
+```text
+◆ crew · 1 running · 15 done · 1 failed
+
+╭──────────────────╮ ╭──────────────────╮ ╭──────────────────╮
+│ Cost             │ │ Tokens           │ │ Time             │
+│ $0.41            │ │ 206.5k           │ │ 12:18            │
+╰──────────────────╯ ╰──────────────────╯ ╰──────────────────╯
+
+RUNNING · 1
+
+  ▀▄   ▄▀   Scan the repo for TODO markers                   ●
+  ▄█████▄   Explore · haiku 4.5 · high · step 7 · Bash
+ █▀▀█▀▀███  ━━━━━━━━─────────────────────────────── ctx 21%
+▀█▄▄▀▄▄███▄ 209.0k tok · 12 tools · ≈$0.04 · 5:35
+  █▀▀▀▀█▀
+
+FINISHED · 16                                      c: Collapse
+✓ Map the API routes         haiku 4.5 · 52.0k · ≈$0.31 · 2:10
+✓ Draft the migration plan    opus 5.5 · 88.1k · ≈$0.74 · 3:02
+✗ Run the flaky test suite sonnet 4.5 · 118.4k · ≈$0.62 · 4:51
+✓ Review the auth module    sonnet 4.5 · 61.7k · ≈$0.29 · 1:48
+…
+```
+
+*(In the terminal the mascot is drawn in full color, two pixels per cell.)*
+
+## Install
+
+Inside Claude Code:
+
+```text
+/plugin marketplace add flaviorg/crew
+/plugin install crew@crew
+```
+
+Then start a new session, or run `/reload-plugins`. Crew is also listed in my
+[claude-mods](https://github.com/flaviorg/claude-mods) marketplace with my other mods.
+
+## What you see
+
+- **Stat cards** — **Cost** (the session's real cost when Claude Code reports it, else an
+  estimate marked `≈`), **Tokens** (everything the session's model responses reported:
+  main loop and subagents, input, output and cache) and **Time** (since the session
+  started). On a narrow pane they fold into one line.
+- **Running** — a card per agent: its mascot, its description and a status dot; then its
+  type, model, effort, step count and last tool; a thin bar for how full its context is;
+  and its tokens, tool calls, estimated cost and time. An agent that finishes stays here
+  for three seconds to celebrate (`✓`) or droop (`✗` failed, `■` stopped), then moves on.
+  Past 30 cards, one line says how many more run.
+- **Finished** — newest first, with `✓`, `✗` or `■`, the model, tokens, cost and time.
+  Its `c: Collapse` button folds it and `e: Expand` unfolds it; the choice sticks across
+  sessions. Past 50 rows, one line says how many more.
+- **The band** — while anything runs, one line above the prompt: a dot per agent in its
+  mascot's color, how many run, for how long, and their cost. `o: Open` opens the pane.
+
+  ```text
+  ◆ crew ●● 2 running · 0:42 · ≈$0.18  o: Open
+  ```
+
+The pane opens by itself the first time Claude delegates, if the terminal is wide enough
+for a pane nobody asked for (144 columns); otherwise a toast says to run `/crew`.
+
+## The mascots
+
+Every agent type gets its own head piece and coat, so a glance tells them apart.
+
+| Agent type | Head piece | Coat |
+|---|---|---|
+| `general-purpose` (and forks) | an antenna | coral `#D97757` |
+| `Explore` | feelers | teal `#35B5AC` |
+| `Plan` | a cap | violet `#9B7BEA` |
+| any custom type | a sprout | amber, pink, blue or green — always the same one for the same type |
+
+<img src="docs/media/poses.png" alt="The general-purpose mascot in its four poses: idle, working, done (hands up, sparkles) and failed (grey, drooping, a tear)" width="560">
+
+| Pose | When | What it does |
+|---|---|---|
+| idle | the empty pane | blinks now and then |
+| working | the agent runs | looks left and right, taps, steps; its tip pulses |
+| done | it finished | hops with its hands up while sparkles twinkle |
+| failed | it failed or was stopped | turns grey and droops; a tear rolls down |
+
+Every pose plays at four frames a second. The pixel art is original and lives in
+[`hooks/sprites.ts`](hooks/sprites.ts) as plain strings.
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `/crew` | Shows the pane, or hides it when it is showing |
+
+## Options
+
+Set them with `/plugin configure crew@crew`:
+
+| Option | Values | Default | What it does |
+|---|---|---|---|
+| `autoOpen` | `on`, `off` | `on` | Open the pane when Claude first delegates to a subagent (if the terminal is wide enough) |
+| `band` | `on`, `off` | `on` | Show the one-line summary above the prompt while subagents run |
+| `mascot` | `on`, `off` | `on` | Draw the animated mascots; `off` draws a dot in the agent's color |
+| `prices` | JSON | *(empty)* | Override the price table, in $ per million tokens |
+
+`prices` keys are model families (`opus`, `sonnet`, `haiku`) or any part of a model id;
+the longest match wins. For example:
+
+```json
+{ "opus": { "input": 5, "output": 25, "cacheRead": 0.5, "cacheWrite": 6.25 },
+  "fable": { "input": 2, "output": 10, "cacheRead": 0.2, "cacheWrite": 2.5 } }
+```
+
+The built-in table, in $ per million tokens:
+
+| Family | Input | Output | Cache read | Cache write |
+|---|---|---|---|---|
+| opus | 5 | 25 | 0.50 | 6.25 |
+| sonnet | 3 | 15 | 0.30 | 3.75 |
+| haiku | 1 | 5 | 0.10 | 1.25 |
+
+## About the numbers
+
+- **The Cost card** is Claude Code's own figure for the session when it has one. Only
+  when it does not is it crew's estimate, marked `≈`.
+- **An agent's cost** is always an estimate (`≈`): its tokens times the price table.
+  Claude Code reports the session's cost, not each subagent's. A model with no price
+  shows `—`.
+- **Tokens** are counted once, from each model response. The total a turn reports at its
+  end is the same tokens again, so it is not added.
+- **Context %** is the agent's last request (input plus cache) over its model's window:
+  the session's window when the agent runs the main model, a million for a `[1m]` model,
+  200k otherwise. It says how full the agent's context is; it is not progress.
+- **Time** runs from the spawn and stops when the agent ends. A teammate that works again
+  picks up where its clock stopped.
+- **Failures and kills** that no turn end reports are picked up from Claude Code's agent
+  list every two seconds while an agent runs. Agents started by a workflow are never in
+  that list; they are not marked failed for it.
+
+## Privacy
+
+Crew reads only what Claude Code tells its hooks — subagent spawns, tool calls, model
+requests and turn ends — and asks Claude Code for its list of agents, the session's usage
+and the main model. It runs no commands, reads no files of yours and makes no network
+requests. It stores one thing, whether Finished is collapsed, in its own plugin store.
+You can confirm this before installing:
+
+```bash
+claude plugin validate ./crew
+```
+
+The `calls:` line lists every mods API call it makes.
+
+## Compatibility
+
+Tested with Claude Code **2.1.296** in the terminal and the Desktop app's Code tab. The
+terminal draws the mascots as pixel art in half blocks; the Desktop app draws the same
+pixels as an animated SVG. A pane Claude Code opens without being asked needs a terminal
+144 columns wide (110 once you have opened it yourself); `/crew` opens it at any width.
+A drawing has a size limit, so with many agents at once only the first ones get a mascot
+(about thirty in the terminal, ten in the Desktop app) and the rest get a colored dot.
+
+## Development
+
+```bash
+claude plugin validate --strict .   # manifest, hooks and calls
+claude plugin test .                 # 81 tests, no session or sign-in needed
+claude --plugin-dir .                # try it in a session; edits hot-reload
+```
+
+`hooks/register.ts` is the only file that touches the mods API. The rest is pure and
+tested on its own: `sprites.ts` (the mascots and their encoders), `pricing.ts` (prices,
+model names, number formats), `roster.ts` (the agents' lifecycle) and `view.ts` (the text
+of every line). Design notes live in [`docs/superpowers/plans`](docs/superpowers/plans).
+
+## Credits
+
+The mascots are original pixel art. Crew is written from scratch against the public
+Claude Code mods API.
+
+## License
+
+[MIT](LICENSE) © flaviorg
