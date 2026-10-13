@@ -409,7 +409,10 @@ async function drawPane($: any, e: any) {
   const now = await $.clock.now()
   const usage = await sessionUsage($)
   const mainModel = await sessionModel($)
-  const width = Math.max(1, e.props?.bodyColumns ?? 60)
+  // A dock draws the body flush against its left border: crew keeps a cell clear of it, as
+  // an inline frame already does, and lays out to what is left.
+  const docked = e.props?.placement === 'dock'
+  const width = Math.max(1, (e.props?.bodyColumns ?? 60) - (docked ? 1 : 0))
   const view: View = { width, now, mainModel, window: usage?.context?.window ?? 200_000, art: { left: ART_BUDGET } }
   const sum = totals(r, overrides, mainModel)
   const startedAt = typeof usage?.startedAt === 'number' ? usage.startedAt : now
@@ -417,7 +420,7 @@ async function drawPane($: any, e: any) {
   const running = live(r, now)
   const done = finished(r, now)
   ensureTicker($, now)
-  return Box({
+  const root = Box({
     flexDirection: 'column',
     children: [
       header($, e, r, width),
@@ -427,6 +430,7 @@ async function drawPane($: any, e: any) {
       ...(done.length > 0 ? finishedSection($, e, done, width) : []),
     ],
   })
+  return docked ? Box({ flexDirection: 'column', paddingLeft: 1, children: [root] }) : root
 }
 
 // ── the band ───────────────────────────────────────────────────────────────────────────

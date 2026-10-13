@@ -6,8 +6,11 @@ const PANE = {
   component: 'Pane',
   requestId: 'crew',
   viewport: { columns: 120, rows: 60 },
-  props: { title: 'Crew', isFocused: false, bodyColumns: 70, placement: 'dock', scroll: { offset: 0, bodyRows: 200 }, view: {} },
+  props: { title: 'Crew', isFocused: false, bodyColumns: 70, placement: 'inline', scroll: { offset: 0, bodyRows: 200 }, view: {} },
 } as const
+
+/** The pane seated beside a fullscreen transcript. */
+const DOCK = { ...PANE, props: { ...PANE.props, placement: 'dock' } } as const
 
 const BAND = {
   plugin: 'crew',
@@ -145,7 +148,7 @@ function needs(n: any): number {
   if (n.type !== 'Box') return 0
   const margin = p.marginLeft ?? 0
   if (typeof p.width === 'number') return p.width + margin
-  const frame = 2 * (p.paddingX ?? 0) + (p.borderStyle ? 2 : 0) + margin
+  const frame = 2 * (p.paddingX ?? 0) + (p.paddingLeft ?? 0) + (p.paddingRight ?? 0) + (p.borderStyle ? 2 : 0) + margin
   const ws = kids.map(needs)
   if ((p.flexDirection ?? 'row') !== 'row') return frame + Math.max(0, ...ws)
   return frame + ws.reduce((a: number, b: number) => a + b, 0) + (p.gap ?? 0) * Math.max(0, kids.length - 1)
@@ -700,6 +703,39 @@ test('every line fits a narrow pane', async ($, on) => {
   // The band keeps the cost when it runs short: the counts of agents just ended go first.
   const band: any = await $.ui.mount({ ...BAND, props: { ...BAND.props, bodyColumns: 50 }, surface: 'terminal' })
   expect(needs(await band.drawn())).toBeLessThanOrEqual(50)
+})
+
+test('a docked pane keeps a column clear of the dock\'s border', async ($, on) => {
+  const s = stubs(on, { cost: 12.5 })
+  await spawn($, 'Scan the repo for TODO markers')
+  await step($, s, 'ag-1', { input_tokens: 2_000, output_tokens: 500, cache_read_input_tokens: 40_000, cache_creation_input_tokens: 0, model: 'claude-haiku-4-5' })
+  const cardCells = async (ui: any) =>
+    (await Promise.all(['cost', 'tokens', 'time'].map(async (k) => (await ui.find({ key: 'card:' + k })).props.width))).reduce((a, b) => a + b, 2)
+  const gaugeCells = async (ui: any) =>
+    widthOf((await textOf(ui, { type: 'Text', text: /^━+$/ })) + (await textOf(ui, { type: 'Text', text: /^─+$/ })))
+  for (const surface of SURFACES) {
+    // Docked, the engine draws the body flush against the border: crew pads one cell and
+    // lays out to the 69 the padding leaves.
+    let ui: any = await $.ui.mount({ ...DOCK, surface })
+    let root = await ui.drawn()
+    expect(root.props.paddingLeft).toBe(1)
+    expect(await cardCells(ui)).toBe(69)
+    expect(await gaugeCells(ui)).toBe(49)
+    expect(needs(root)).toBeLessThanOrEqual(70)
+    await ui.unmount()
+    // Inline the frame has its own space: no padding, all 70 cells.
+    ui = await $.ui.mount({ ...PANE, surface })
+    root = await ui.drawn()
+    expect(root.props.paddingLeft).toBeUndefined()
+    expect(await cardCells(ui)).toBe(70)
+    expect(await gaugeCells(ui)).toBe(50)
+    await ui.unmount()
+  }
+  for (const cols of [26, 30, 44]) {
+    const ui: any = await $.ui.mount({ ...DOCK, props: { ...DOCK.props, bodyColumns: cols }, surface: 'terminal' })
+    expect(needs(await ui.drawn())).toBeLessThanOrEqual(cols)
+    await ui.unmount()
+  }
 })
 
 test('stat cards share the width evenly', async ($, on) => {
