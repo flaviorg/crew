@@ -1,4 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
+import { widthOf } from '../hooks/view.ts'
 
 const PANE = {
   plugin: 'crew',
@@ -123,6 +124,25 @@ function complete($: any, agentId: string, more: Record<string, unknown> = { rea
 
 const textOf = async (ui: any, query: any) => (await ui.find(query))?.text
 
+// The cells a drawn element needs to sit on its lines without wrapping: a row adds up its
+// children, a column takes the widest, a Box with a width takes that.
+function needs(n: any): number {
+  if (typeof n === 'string') return widthOf(n)
+  if (n === null || typeof n !== 'object') return 0
+  const p = n.props ?? {}
+  const kids = [n.children ?? []].flat(Infinity).filter((c: any) => c !== null && c !== undefined && c !== false)
+  if (n.type === 'Text') return widthOf(kids.map((c: any) => (typeof c === 'string' ? c : '')).join(''))
+  if (n.type === 'Raster') return p.columns
+  if (n.type === 'Button') return widthOf(`${p.hotkey}: ${p.label}`)
+  if (n.type !== 'Box') return 0
+  const margin = p.marginLeft ?? 0
+  if (typeof p.width === 'number') return p.width + margin
+  const frame = 2 * (p.paddingX ?? 0) + (p.borderStyle ? 2 : 0) + margin
+  const ws = kids.map(needs)
+  if ((p.flexDirection ?? 'row') !== 'row') return frame + Math.max(0, ...ws)
+  return frame + ws.reduce((a: number, b: number) => a + b, 0) + (p.gap ?? 0) * Math.max(0, kids.length - 1)
+}
+
 // Boxes whose key starts with a prefix (find matches a key exactly).
 const keyed = async (ui: any, prefix: string) => (await ui.findAll({ type: 'Box' })).filter((x: any) => String(x.key ?? '').startsWith(prefix))
 
@@ -195,8 +215,10 @@ test('steps fill tokens and the context bar', async ($, on) => {
   ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await ui.find({ type: 'Text', text: 'ctx 21%' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^42\.6k tok · / })).toBeDefined()
-  // The bar is 47 columns at this width; 21% of it is filled.
-  expect(await textOf(ui, { type: 'Text', text: /^━+$/ })).toBe('━'.repeat(Math.round(0.21 * (70 - 11 - 12))))
+  // The gauge and its label fill the text column (70 less the mascot and its margin), so
+  // the label ends under the status glyph: 50 cells of bar, 21% of them filled.
+  expect(await textOf(ui, { type: 'Text', text: /^━+$/ })).toBe('━'.repeat(Math.round(0.21 * 50)))
+  expect(await textOf(ui, { type: 'Text', text: /^─+$/ })).toHaveLength(50 - 11)
 })
 
 // The chunks a step's stream delivers, in order, and how it ended.
@@ -561,6 +583,46 @@ test('the Time card ticks while the pane is shown', async ($, on) => {
   expect(await textOf(ui, { key: 'card:time' })).toBe('Time0:00')
   await s.clock.advance(5_000)
   expect(await textOf(ui, { key: 'card:time' })).toBe('Time0:05')
+})
+
+test('every line fits a narrow pane', async ($, on) => {
+  const s = stubs(on)
+  await spawn($, 'Draft the migration plan for the billing service and every consumer of it', 'Plan')
+  await step($, s, 'ag-1', { input_tokens: 4_000, output_tokens: 3_000, cache_read_input_tokens: 148_000, cache_creation_input_tokens: 2_000, model: 'claude-opus-5-5' })
+  await ($.tool.call as any)({ tool: 'Read', file_path: '/w/a.ts', agentId: 'ag-1' })
+  for (let i = 0; i < 3; i++) await spawn($, 'Run the flaky test suite ' + i, 'general-purpose')
+  await complete($, 'ag-2', { reason: 'error' })
+  await complete($, 'ag-3', { reason: 'answer', isAborted: true })
+  await complete($, 'ag-4')
+  await spawn($, 'Scan the repo for TODO markers', 'Explore')
+  await s.clock.advance(358_000)
+  for (const cols of [26, 30, 44, 60, 70, 100]) {
+    const ui: any = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: cols }, surface: 'terminal' })
+    expect(needs(await ui.drawn())).toBeLessThanOrEqual(cols)
+    // The header never wraps: the family mark stays whole, the facts are cut.
+    expect(widthOf(await textOf(ui, { type: 'Text', text: /^ · \d+ running/ }))).toBeLessThanOrEqual(cols - 6)
+    // Narrower than a mascot and a readable line, a card gets a dot.
+    expect(await ui.findAll({ type: 'Raster' })).toHaveLength(cols >= 28 ? 2 : 0)
+    await ui.unmount()
+  }
+  const ui: any = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 20 }, surface: 'terminal' })
+  expect(widthOf(await textOf(ui, { type: 'Text', text: /^ · / }))).toBeLessThanOrEqual(14)
+  expect(await textOf(ui, { type: 'Text', text: /^ctx \d+%$|^ ctx/ })).toBeDefined()
+  // The band keeps the cost when it runs short: the counts of agents just ended go first.
+  const band: any = await $.ui.mount({ ...BAND, props: { ...BAND.props, bodyColumns: 50 }, surface: 'terminal' })
+  expect(needs(await band.drawn())).toBeLessThanOrEqual(50)
+})
+
+test('stat cards share the width evenly', async ($, on) => {
+  stubs(on, { cost: 12.5 })
+  for (const cols of [36, 70, 100]) {
+    const ui: any = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: cols }, surface: 'terminal' })
+    const widths = await Promise.all(['cost', 'tokens', 'time'].map(async (k) => (await ui.find({ key: 'card:' + k })).props.width))
+    expect(widths[0]).toBe(widths[1])
+    expect(widths[2]! - widths[0]!).toBeLessThanOrEqual(2)
+    expect(widths[0]! + widths[1]! + widths[2]! + 2).toBe(cols)
+    await ui.unmount()
+  }
 })
 
 test('a narrow pane draws the cards as one line', async ($, on) => {

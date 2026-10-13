@@ -68,6 +68,27 @@ export function oneLine(s: string, max = 200): string {
   return truncate(String(s).replace(CONTROL, ' ').replace(/\s+/g, ' ').trim(), max)
 }
 
+/** One part of a ` · ` line; parts with a `drop` rank go first, lowest first, when room is short. */
+export type Part = { text: string; drop?: number }
+
+/**
+ * Joins `parts` with ` · ` in at most `width` cells. Whole parts go before anything is cut:
+ * droppable ones, lowest `drop` first; only a line still too wide is truncated.
+ */
+export function fit(parts: readonly Part[], width: number): string {
+  let kept = parts.slice()
+  const line = () => kept.map((p) => p.text).join(SEP)
+  while (widthOf(line()) > width) {
+    let at = -1
+    kept.forEach((p, i) => {
+      if (p.drop !== undefined && (at < 0 || p.drop < kept[at]!.drop!)) at = i
+    })
+    if (at < 0) break
+    kept = kept.filter((_, i) => i !== at)
+  }
+  return truncate(line(), width)
+}
+
 /** `1 running · 15 done · 2 failed`, zero parts left out; `idle` when all are zero. */
 export function headerFacts(c: { running: number; done: number; failed: number; stopped?: number }): string {
   const parts: string[] = []
@@ -78,14 +99,17 @@ export function headerFacts(c: { running: number; done: number; failed: number; 
   return parts.length > 0 ? parts.join(SEP) : 'idle'
 }
 
-/** `Explore · haiku 4.5 · high · step 7 · Bash`: the model, effort and last tool when known. */
+/**
+ * `Explore · haiku 4.5 · high · step 7 · Bash`: the model, effort and last tool when known.
+ * Short of room, the last tool goes first, then the effort.
+ */
 export function metaLine(a: AgentRow, width: number): string {
-  const parts = [a.type]
-  if (a.model !== '') parts.push(shortModel(a.model))
-  if (a.effort) parts.push(a.effort)
-  parts.push(a.steps > 0 ? `step ${a.steps}` : 'starting')
-  if (a.lastTool) parts.push(a.lastTool)
-  return truncate(parts.join(SEP), width)
+  const parts: Part[] = [{ text: a.type }]
+  if (a.model !== '') parts.push({ text: shortModel(a.model) })
+  if (a.effort) parts.push({ text: a.effort, drop: 2 })
+  parts.push({ text: a.steps > 0 ? `step ${a.steps}` : 'starting' })
+  if (a.lastTool) parts.push({ text: a.lastTool, drop: 1 })
+  return fit(parts, width)
 }
 
 const clamp = (p: number): number => (Number.isFinite(p) ? Math.min(100, Math.max(0, p)) : 0)
@@ -104,19 +128,43 @@ export function ctxLabel(percent: number): string {
 const usdOrDash = (usd: number | null): string => (usd === null ? '—' : formatUsd(usd, true))
 const elapsed = (a: AgentRow, now: number): string => formatClock((a.endedAt ?? now) - a.startedAt)
 
-/** `209.0k tok · 3 tools · ≈$0.04 · 5:35`; the clock stops when the agent ends. */
-export function statsLine(a: AgentRow, now: number, usd: number | null): string {
-  const parts = [`${formatTokens(totalTokens(a.tokens))} tok`]
-  if (a.tools > 0) parts.push(`${a.tools} ${a.tools === 1 ? 'tool' : 'tools'}`)
-  parts.push(usdOrDash(usd), elapsed(a, now))
-  return parts.join(SEP)
+/**
+ * `209.0k tok · 3 tools · ≈$0.04 · 5:35`; the clock stops when the agent ends. Short of
+ * room, the tool count goes first, then the tokens: the cost and the time stay.
+ */
+export function statsLine(a: AgentRow, now: number, usd: number | null, width = Infinity): string {
+  const parts: Part[] = [{ text: `${formatTokens(totalTokens(a.tokens))} tok`, drop: 2 }]
+  if (a.tools > 0) parts.push({ text: `${a.tools} ${a.tools === 1 ? 'tool' : 'tools'}`, drop: 1 })
+  parts.push({ text: usdOrDash(usd) }, { text: elapsed(a, now) })
+  return fit(parts, width)
+}
+
+function finishedParts(a: AgentRow, usd: number | null): string[] {
+  const parts = a.model !== '' ? [shortModel(a.model)] : []
+  parts.push(formatTokens(totalTokens(a.tokens)), usdOrDash(usd), elapsed(a, a.endedAt ?? a.startedAt))
+  return parts
 }
 
 /** The right side of a Finished row: `haiku 4.5 · 52.0k · ≈$0.31 · 2:10`. */
 export function finishedRight(a: AgentRow, usd: number | null): string {
-  const parts = a.model !== '' ? [shortModel(a.model)] : []
-  parts.push(formatTokens(totalTokens(a.tokens)), usdOrDash(usd), elapsed(a, a.endedAt ?? a.startedAt))
-  return parts.join(SEP)
+  return finishedParts(a, usd).join(SEP)
+}
+
+/**
+ * A Finished row in `width` cells: `✓ <title> <right>`. The title keeps up to 16 cells (all
+ * of a shorter one): while it would get fewer, the right side drops its model, then its
+ * tokens, then its time. The cost stays.
+ */
+export function finishedLine(a: AgentRow, usd: number | null, width: number): { title: string; right: string } {
+  const desc = a.description || a.type
+  const want = Math.min(widthOf(desc), 16)
+  let parts = finishedParts(a, usd)
+  while (parts.length > 1 && width - 3 - widthOf(parts.join(SEP)) < want) {
+    // The model and the tokens lead the list and go first; then the time, after the cost.
+    parts = parts.length > 2 ? parts.slice(1) : parts.slice(0, 1)
+  }
+  const right = truncate(parts.join(SEP), Math.max(0, width - 3 - Math.min(want, 6)))
+  return { title: truncate(desc, Math.max(0, width - 3 - widthOf(right))), right }
 }
 
 /** The three stat cards. Claude Code's real session cost wins; else crew's estimate, marked ≈. */
@@ -129,23 +177,38 @@ export function cards(input: { realUsd: number | null; estUsd: number | null; to
   ]
 }
 
-/** The cards on one line, for panes too narrow for three boxes. */
-export function cardsLine(list: { label: string; value: string }[]): string {
-  return list.map((c) => `${c.label} ${c.value}`).join(SEP)
+/**
+ * The cards on one line, for panes too narrow for three boxes: `Cost $0.41 · Tokens 206.5k ·
+ * Time 12:18`, or `$0.41 · 206.5k tok · 12:18` when that does not fit either.
+ */
+export function cardsLine(list: { label: string; value: string }[], width = Infinity): string {
+  const full = list.map((c) => `${c.label} ${c.value}`).join(SEP)
+  if (widthOf(full) <= width) return full
+  return truncate(list.map((c) => (c.label === 'Tokens' ? `${c.value} tok` : c.value)).join(SEP), width)
 }
 
-/** The band: `2 running · 0:42 · ≈$0.18`, over the agents still in Running. */
-export function bandFacts(r: Roster, now: number, overrides: Record<string, Price>): string {
+/**
+ * The band: `2 running · 0:42 · ≈$0.18`, over the agents still in Running. Short of room,
+ * the counts of agents that just ended go first (while any still runs), then the clock.
+ */
+export function bandFacts(r: Roster, now: number, overrides: Record<string, Price>, width = Infinity): string {
   const agents = live(r, now)
-  const parts = [headerFacts(counts({ ...r, agents }))]
-  if (agents.length > 0) parts.push(formatClock(now - Math.min(...agents.map((a) => a.startedAt))))
+  const c = counts({ ...r, agents })
+  const ended = c.running > 0 ? 1 : undefined
+  const parts: Part[] = []
+  if (c.running > 0) parts.push({ text: `${c.running} running` })
+  if (c.done > 0) parts.push({ text: `${c.done} done`, drop: ended })
+  if (c.failed > 0) parts.push({ text: `${c.failed} failed`, drop: ended })
+  if (c.stopped > 0) parts.push({ text: `${c.stopped} stopped`, drop: ended })
+  if (parts.length === 0) parts.push({ text: 'idle' })
+  if (agents.length > 0) parts.push({ text: formatClock(now - Math.min(...agents.map((a) => a.startedAt))), drop: 2 })
   let usd: number | null = null
   for (const a of agents) {
     const e = estimate(a, overrides)
     if (e !== null) usd = (usd ?? 0) + e
   }
-  if (usd !== null) parts.push(formatUsd(usd, true))
-  return parts.join(SEP)
+  if (usd !== null) parts.push({ text: formatUsd(usd, true) })
+  return fit(parts, width)
 }
 
 /** An agent's status glyph and its color: the accent while running, theme keys after. */

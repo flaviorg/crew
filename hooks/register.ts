@@ -13,7 +13,7 @@ import {
 } from './roster.ts'
 import { encodeCells, FRAME_MS, frameAt, kindOf, paletteFor, spriteSvg, SPRITE_COLUMNS, SPRITE_ROWS, type Pose } from './sprites.ts'
 import {
-  ACCENT, bandFacts, bar, cards, cardsLine, ctxLabel, EMPTY_TEXT, FINISHED_CAP, finishedRight, glyphOf,
+  ACCENT, bandFacts, bar, cards, cardsLine, ctxLabel, EMPTY_TEXT, FINISHED_CAP, finishedLine, glyphOf,
   headerFacts, metaLine, oneLine, statsLine, truncate,
 } from './view.ts'
 
@@ -27,6 +27,8 @@ const ART_BUDGET = 32_000
 const RUNNING_CAP = 30
 /** Dots in the band, one per live agent. */
 const BAND_DOTS = 8
+/** Narrower than this, a card leaves its text too little room for a mascot: it gets a dot. */
+const ART_MIN_WIDTH = SPRITE_COLUMNS + 1 + 16
 /** Ticks between two looks at $.agent.list(): every 2 s while an agent runs. */
 const RECONCILE_EVERY = 8
 /** With no period for this long, the interval is gone: a refused period ends it silently. */
@@ -188,9 +190,9 @@ function spend(art: { left: number }, size: number): boolean {
 // One agent's mascot for the surface drawing it: half-block pixels in the terminal, a
 // self-animating SVG where Svg exists, a dot in its coat's color otherwise (and once the
 // art budget is spent).
-function mascot($: any, e: any, id: string, type: string, pose: Pose, alt: string, art: { left: number }) {
+function mascot($: any, e: any, id: string, type: string, pose: Pose, alt: string, art: { left: number }, roomy: boolean) {
   const palette = paletteFor(type, pose)
-  if (settings.mascot === 'on') {
+  if (settings.mascot === 'on' && roomy) {
     if (e.surface === 'terminal') {
       const { Raster } = $.ui.resolve(e)
       const cells = encodeCells(frameAt(kindOf(type), pose, frame), palette)
@@ -205,31 +207,37 @@ function mascot($: any, e: any, id: string, type: string, pose: Pose, alt: strin
   return Text({ color: palette.b!, children: ['●'] })
 }
 
-function header($: any, e: any, r: Roster) {
+// The family mark, then the facts cut to what the pane leaves them: never a second line.
+function header($: any, e: any, r: Roster, width: number) {
   const { Box, Text } = $.ui.resolve(e)
+  const facts = truncate(' · ' + headerFacts(counts(r)), width - 6)
   return Box({
     flexDirection: 'row',
-    children: [Text({ bold: true, children: ['◆ crew'] }), Text({ dimColor: true, children: [' · ' + headerFacts(counts(r))] })],
+    children: [Text({ bold: true, children: ['◆ crew'] }), facts !== '' && Text({ dimColor: true, children: [facts] })],
   })
 }
 
-// Three round cards, or one dim line when three would not fit.
+// Three round cards of one width each (the last takes the odd cells), or one dim line when
+// three would not fit. Fixed widths keep the borders still while the values change length.
 function statCards($: any, e: any, list: { label: string; value: string }[], width: number) {
   const { Box, Text } = $.ui.resolve(e)
-  if (width < 36) return Text({ dimColor: true, children: [truncate(cardsLine(list), width)] })
-  const card = (c: { label: string; value: string }) =>
-    Box({
+  if (width < 36) return Text({ dimColor: true, children: [cardsLine(list, width)] })
+  const each = Math.floor((width - 2) / 3)
+  const card = (c: { label: string; value: string }, i: number) => {
+    const w = i === list.length - 1 ? width - 2 - each * (list.length - 1) : each
+    return Box({
       key: 'card:' + c.label.toLowerCase(),
       borderStyle: 'round',
       borderColor: 'subtle',
       flexDirection: 'column',
       paddingX: 1,
-      flexGrow: 1,
+      width: w,
       children: [
-        Text({ dimColor: true, children: [c.label] }),
-        Text({ bold: true, ...(c.label === 'Cost' ? { color: ACCENT } : {}), children: [c.value] }),
+        Text({ dimColor: true, children: [truncate(c.label, w - 4)] }),
+        Text({ bold: true, ...(c.label === 'Cost' ? { color: ACCENT } : {}), children: [truncate(c.value, w - 4)] }),
       ],
     })
+  }
   return Box({ flexDirection: 'row', gap: 1, marginTop: 1, children: list.map(card) })
 }
 
@@ -238,17 +246,21 @@ function agentCard($: any, e: any, a: AgentRow, view: View) {
   const { Box, Text } = $.ui.resolve(e)
   const pose = poseOf(a)
   const glyph = glyphOf(a.status, frame)
-  const art = settings.mascot === 'on' ? SPRITE_COLUMNS : 1
-  const width = Math.max(10, view.width - art - 1)
+  const roomy = view.width >= ART_MIN_WIDTH
+  // The text column: what the mascot (or its dot) and the margin leave.
+  const width = Math.max(1, view.width - (settings.mascot === 'on' && roomy ? SPRITE_COLUMNS : 1) - 1)
   const pct = (100 * a.context) / contextWindow(a.model, view.window, view.mainModel)
-  const gauge = bar(pct, Math.max(6, view.width - art - 12))
+  // The gauge and its label end where the status glyph above them does.
+  const label = ctxLabel(pct)
+  const room = width - label.length - 1
+  const gauge = room >= 3 ? bar(pct, room) : { filled: '', track: '' }
   const lit = a.status === 'running' ? ACCENT : 'subtle'
   return Box({
     key: 'agent:' + a.id,
     flexDirection: 'row',
     marginTop: 1,
     children: [
-      mascot($, e, a.id, a.type, pose, `${truncate(a.description || a.type, 80)} — ${pose}`, view.art),
+      mascot($, e, a.id, a.type, pose, `${truncate(a.description || a.type, 80)} — ${pose}`, view.art, roomy),
       Box({
         flexDirection: 'column',
         marginLeft: 1,
@@ -268,10 +280,10 @@ function agentCard($: any, e: any, a: AgentRow, view: View) {
             children: [
               gauge.filled !== '' && Text({ color: lit, children: [gauge.filled] }),
               gauge.track !== '' && Text({ color: 'subtle', children: [gauge.track] }),
-              Text({ dimColor: true, children: [' ' + ctxLabel(pct)] }),
+              Text({ dimColor: true, children: [room >= 3 ? ' ' + label : truncate(label, width)] }),
             ],
           }),
-          Text({ dimColor: true, children: [truncate(statsLine(a, view.now, estimate(a, overrides)), width)] }),
+          Text({ dimColor: true, children: [statsLine(a, view.now, estimate(a, overrides), width)] }),
         ],
       }),
     ],
@@ -291,13 +303,13 @@ function runningSection($: any, e: any, agents: AgentRow[], view: View) {
 function finishedRow($: any, e: any, a: AgentRow, width: number) {
   const { Box, Text } = $.ui.resolve(e)
   const glyph = glyphOf(a.status, 0)
-  const right = truncate(finishedRight(a, estimate(a, overrides)), Math.max(0, width - 12))
+  const { title, right } = finishedLine(a, estimate(a, overrides), width)
   return Box({
     key: 'done:' + a.id,
     flexDirection: 'row',
     children: [
       Text({ color: glyph.color, children: [glyph.char] }),
-      Text({ children: [' ' + truncate(a.description || a.type, width - right.length - 4)] }),
+      Text({ children: [' ' + title] }),
       Box({ flexGrow: 1 }),
       Text({ dimColor: true, children: [' ' + right] }),
     ],
@@ -328,13 +340,13 @@ function finishedSection($: any, e: any, done: AgentRow[], width: number) {
 }
 
 // Never a blank pane: an idle mascot and what will happen.
-function emptyState($: any, e: any, art: { left: number }) {
+function emptyState($: any, e: any, art: { left: number }, width: number) {
   const { Box, Text } = $.ui.resolve(e)
   return Box({
     flexDirection: 'row',
     marginTop: 1,
     children: [
-      mascot($, e, 'idle', 'general-purpose', 'idle', 'crew mascot, waiting', art),
+      mascot($, e, 'idle', 'general-purpose', 'idle', 'crew mascot, waiting', art, width >= ART_MIN_WIDTH),
       Box({
         flexDirection: 'column',
         justifyContent: 'center',
@@ -368,7 +380,7 @@ async function drawPane($: any, e: any) {
   const now = await $.clock.now()
   const usage = await sessionUsage($)
   const mainModel = await sessionModel($)
-  const width = Math.max(20, e.props?.bodyColumns ?? 60)
+  const width = Math.max(1, e.props?.bodyColumns ?? 60)
   const view: View = { width, now, mainModel, window: usage?.context?.window ?? 200_000, art: { left: ART_BUDGET } }
   const sum = totals(r, overrides, mainModel)
   const startedAt = typeof usage?.startedAt === 'number' ? usage.startedAt : now
@@ -379,9 +391,9 @@ async function drawPane($: any, e: any) {
   return Box({
     flexDirection: 'column',
     children: [
-      header($, e, r),
+      header($, e, r, width),
       statCards($, e, values, width),
-      ...(r.agents.length === 0 ? [emptyState($, e, view.art)] : []),
+      ...(r.agents.length === 0 ? [emptyState($, e, view.art, width)] : []),
       ...(running.length > 0 ? runningSection($, e, running, view) : []),
       ...(done.length > 0 ? finishedSection($, e, done, width) : []),
     ],
@@ -409,7 +421,7 @@ async function drawBand($: any, e: any, next: any) {
     children: [
       Text({ bold: true, children: ['◆ crew '] }),
       ...dots,
-      Text({ dimColor: true, children: [' ' + truncate(bandFacts(r, now, overrides), room) + '  '] }),
+      Text({ dimColor: true, children: [' ' + bandFacts(r, now, overrides, room) + '  '] }),
       Button({ key: 'band-open', plain: true, hotkey: 'o', label: 'Open', onPress: () => openPane($) }),
     ],
   })

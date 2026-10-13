@@ -1,8 +1,8 @@
 import { expect, test } from 'claude-code/testing'
 import { completed, EMPTY, spawned, stepped, type AgentRow } from '../hooks/roster.ts'
 import {
-  ACCENT, bandFacts, bar, cards, cardsLine, ctxLabel, DOTS, EMPTY_TEXT, FINISHED_CAP, finishedRight,
-  glyphOf, headerFacts, metaLine, oneLine, statsLine, truncate, widthOf,
+  ACCENT, bandFacts, bar, cards, cardsLine, ctxLabel, DOTS, EMPTY_TEXT, FINISHED_CAP, finishedLine, finishedRight,
+  fit, glyphOf, headerFacts, metaLine, oneLine, statsLine, truncate, widthOf,
 } from '../hooks/view.ts'
 
 function row(over: Partial<AgentRow> = {}): AgentRow {
@@ -70,6 +70,17 @@ test('meta line', () => {
   const cut = metaLine(row({ effort: 'high', lastTool: 'Bash' }), 20)
   expect(cut).toHaveLength(20)
   expect(cut).toEndWith('…')
+  // Short of room, whole parts go before anything is cut: the last tool, then the effort.
+  expect(metaLine(row({ effort: 'high', lastTool: 'Bash' }), 36)).toBe('Explore · haiku 4.5 · high · step 7')
+  expect(metaLine(row({ effort: 'high', lastTool: 'Bash' }), 30)).toBe('Explore · haiku 4.5 · step 7')
+})
+
+test('fit drops whole parts, lowest rank first', () => {
+  const parts = [{ text: 'a' }, { text: 'bb', drop: 1 }, { text: 'ccc', drop: 0 }]
+  expect(fit(parts, 99)).toBe('a · bb · ccc')
+  expect(fit(parts, 6)).toBe('a · bb')
+  expect(fit(parts, 1)).toBe('a')
+  expect(fit([{ text: 'abcdef' }], 4)).toBe('abc…')
 })
 
 test('bar', () => {
@@ -95,12 +106,37 @@ test('stats line', () => {
   expect(statsLine(row({ tools: 0 }), 1_000, null)).toBe('209.0k tok · — · 0:01')
   // A finished agent's clock stops at its end.
   expect(statsLine(row({ status: 'done', endedAt: 42_000 }), 999_000, 0.04)).toBe('209.0k tok · 3 tools · ≈$0.04 · 0:42')
+  // Short of room the tool count goes, then the tokens; the cost and the time stay.
+  expect(statsLine(row(), 335_000, 0.04, 30)).toBe('209.0k tok · ≈$0.04 · 5:35')
+  expect(statsLine(row(), 335_000, 0.04, 20)).toBe('≈$0.04 · 5:35')
 })
 
 test('finished right', () => {
   const a = row({ status: 'done', endedAt: 130_000, tokens: { input: 50_000, output: 2_000, cacheRead: 0, cacheWrite: 0 } })
   expect(finishedRight(a, 0.31)).toBe('haiku 4.5 · 52.0k · ≈$0.31 · 2:10')
   expect(finishedRight({ ...a, model: '' }, null)).toBe('52.0k · — · 2:10')
+})
+
+test('finished line', () => {
+  const a = row({
+    description: 'Run the flaky test suite', status: 'failed', endedAt: 291_000, model: 'claude-sonnet-4-5',
+    tokens: { input: 118_400, output: 0, cacheRead: 0, cacheWrite: 0 },
+  })
+  // Glyph, space, title, space, right side: exactly the width.
+  const at = (w: number) => {
+    const l = finishedLine(a, 0.12, w)
+    expect(2 + widthOf(l.title) + 1 + widthOf(l.right)).toBeLessThanOrEqual(w)
+    return l
+  }
+  expect(at(70)).toEqual({ title: 'Run the flaky test suite', right: 'sonnet 4.5 · 118.4k · ≈$0.12 · 4:51' })
+  expect(at(60)).toEqual({ title: 'Run the flaky test su…', right: 'sonnet 4.5 · 118.4k · ≈$0.12 · 4:51' })
+  // The title keeps 16 cells: the model goes, then the tokens, then the time.
+  expect(at(44)).toEqual({ title: 'Run the flaky test…', right: '118.4k · ≈$0.12 · 4:51' })
+  expect(at(35)).toEqual({ title: 'Run the flaky test…', right: '≈$0.12 · 4:51' })
+  expect(at(30)).toEqual({ title: 'Run the flaky test s…', right: '≈$0.12' })
+  expect(at(24).right).toBe('≈$0.12')
+  // A short title needs less, so more of the right side stays.
+  expect(finishedLine({ ...a, description: 'One' }, 0.12, 30)).toEqual({ title: 'One', right: '118.4k · ≈$0.12 · 4:51' })
 })
 
 test('cards', () => {
@@ -112,6 +148,8 @@ test('cards', () => {
   expect(cards({ realUsd: null, estUsd: 0.41, tokens: 0, sessionMs: 0 })[0]).toEqual({ label: 'Cost', value: '≈$0.41' })
   expect(cards({ realUsd: null, estUsd: null, tokens: 0, sessionMs: 0 })[0]).toEqual({ label: 'Cost', value: '—' })
   expect(cardsLine(cards({ realUsd: 0.41, estUsd: null, tokens: 206_500, sessionMs: 738_000 }))).toBe('Cost $0.41 · Tokens 206.5k · Time 12:18')
+  // Narrower, the compact form keeps all three values.
+  expect(cardsLine(cards({ realUsd: 0.41, estUsd: null, tokens: 206_500, sessionMs: 738_000 }), 30)).toBe('$0.41 · 206.5k tok · 12:18')
 })
 
 test('band facts', () => {
@@ -125,6 +163,10 @@ test('band facts', () => {
   r = completed(r, 'a', { at: 40_000, reason: 'answer' })
   expect(bandFacts(r, 42_000, {})).toStartWith('1 running · 1 done · 0:42')
   expect(bandFacts(r, 43_000, {})).toStartWith('1 running · 0:33')
+  // Short of room, the agents that just ended go first, then the clock; the cost stays.
+  expect(bandFacts(r, 42_000, {})).toBe('1 running · 1 done · 0:42 · ≈$0.20')
+  expect(bandFacts(r, 42_000, {}, 25)).toBe('1 running · 0:42 · ≈$0.20')
+  expect(bandFacts(r, 42_000, {}, 20)).toBe('1 running · ≈$0.20')
   expect(bandFacts(spawned(EMPTY, { ...base, id: 'c', model: 'mystery', at: 0 }), 5_000, {})).toBe('1 running · 0:05')
 })
 
