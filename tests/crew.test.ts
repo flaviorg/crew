@@ -192,6 +192,39 @@ test('a stream that breaks off passes each chunk once', async ($, on) => {
   expect(await ui.find({ type: 'Text', text: /step 1$/ })).toBeDefined()
 })
 
+test('outside text is drawn on one line, free of control characters', async ($, on) => {
+  const s = stubs(on)
+  // A surface refuses a whole tree whose text holds one: the mount would reject.
+  await spawn($, 'Paint \u001b[31mred\u0007 and\nthen\ttest\u0085 it', 'code\u001breviewer')
+  await ($.tool.call as any)({ tool: 'Bash', command: 'ls', agentId: 'ag-1' })
+  const clean = 'Paint [31mred and then test it'
+  for (const surface of SURFACES) {
+    const ui: any = await $.ui.mount({ ...PANE, surface })
+    expect(await ui.find({ type: 'Text', text: clean })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^code reviewer · / })).toBeDefined()
+    if (surface === 'desktop') expect((await ui.find({ type: 'Svg' })).props.alt).toBe(clean + ' — working')
+    await ui.unmount()
+  }
+  await complete($, 'ag-1')
+  await s.clock.advance(3_000)
+  for (const surface of SURFACES) {
+    const ui: any = await $.ui.mount({ ...PANE, surface })
+    expect(await textOf(ui, { key: 'done:ag-1' })).toContain('✓ ' + clean)
+    await ui.unmount()
+  }
+})
+
+test('long descriptions keep the tree small', async ($, on) => {
+  stubs(on)
+  for (let i = 0; i < 12; i++) await spawn($, 'Check every file under src/ for stale imports '.repeat(200) + i)
+  for (const surface of SURFACES) {
+    const ui: any = await $.ui.mount({ ...PANE, surface })
+    expect(JSON.stringify(await ui.drawn()).length).toBeLessThan(80_000)
+    for (const svg of await ui.findAll({ type: 'Svg' })) expect(svg.props.alt.length).toBeLessThanOrEqual(90)
+    await ui.unmount()
+  }
+})
+
 test('main-loop steps count toward the Tokens card only', async ($, on) => {
   const s = stubs(on)
   await step($, s, undefined, USAGE)

@@ -14,7 +14,7 @@ import {
 import { encodeCells, FRAME_MS, frameAt, kindOf, paletteFor, spriteSvg, SPRITE_COLUMNS, SPRITE_ROWS, type Pose } from './sprites.ts'
 import {
   ACCENT, bandFacts, bar, cards, cardsLine, ctxLabel, EMPTY_TEXT, FINISHED_CAP, finishedRight, glyphOf,
-  headerFacts, metaLine, statsLine, truncate,
+  headerFacts, metaLine, oneLine, statsLine, truncate,
 } from './view.ts'
 
 const PANE = 'crew'
@@ -155,7 +155,7 @@ function mascot($: any, e: any, id: string, type: string, pose: Pose, alt: strin
     } else if (e.surface === 'desktop' || e.surface === 'vscode' || e.surface === 'mobile') {
       const { Svg } = $.ui.resolve(e)
       const source = spriteSvg(kindOf(type), pose, palette)
-      if (Svg && spend(art, source.length)) return Svg({ source, alt, width: 44, height: 40, isInteractive: true })
+      if (Svg && spend(art, source.length + alt.length)) return Svg({ source, alt, width: 44, height: 40, isInteractive: true })
     }
   }
   const { Text } = $.ui.resolve(e)
@@ -205,7 +205,7 @@ function agentCard($: any, e: any, a: AgentRow, view: View) {
     flexDirection: 'row',
     marginTop: 1,
     children: [
-      mascot($, e, a.id, a.type, pose, `${a.description || a.type} — ${pose}`, view.art),
+      mascot($, e, a.id, a.type, pose, `${truncate(a.description || a.type, 80)} — ${pose}`, view.art),
       Box({
         flexDirection: 'column',
         marginLeft: 1,
@@ -391,15 +391,17 @@ export function register(on: any, options: any) {
 
   // The spawn resolves once the agent has started, with the id its own events carry.
   // A refused spawn, or one without an id, adds nothing. The result passes untouched.
+  // Its text comes from the model, a workflow script or another plugin: it is kept as one
+  // clean line, since a surface refuses a whole tree whose text holds a control character.
   on('agent.spawn', async ($: any, e: any, next: any) => {
     const r = await next(e)
     if (r && !r.deny && r.agentId) {
       const at = await $.clock.now()
       const row = {
         id: r.agentId,
-        description: e.description ?? '',
-        type: e.subagentType ?? 'general-purpose',
-        model: r.model ?? e.model ?? e.parentModel ?? '',
+        description: oneLine(e.description ?? ''),
+        type: oneLine(e.subagentType ?? '', 60) || 'general-purpose',
+        model: oneLine(r.model ?? e.model ?? e.parentModel ?? '', 80),
         background: e.background === true,
         workflow: !!e.workflow,
         at,
@@ -412,7 +414,7 @@ export function register(on: any, options: any) {
   }).catch(($: any, e: any, next: any) => next(e))
 
   on('tool.call', async ($: any, e: any, next: any) => {
-    if (e.agentId) await update($, rosterAtom, (x) => toolUsed(x, e.agentId, e.tool))
+    if (e.agentId) await update($, rosterAtom, (x) => toolUsed(x, e.agentId, oneLine(String(e.tool ?? ''), 60)))
     return next(e)
   }).catch(($: any, e: any, next: any) => next(e))
 

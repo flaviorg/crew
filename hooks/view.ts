@@ -16,12 +16,56 @@ export const EMPTY_TEXT = 'No subagents yet — they appear here when Claude del
 
 const SEP = ' · '
 
-/** Cuts to `width` characters with a trailing `…`; counts code points, never splits one. */
+// C0 and C1 controls, DEL and the Unicode line and paragraph separators. A surface refuses a
+// whole tree whose text holds a control character, so none is ever drawn.
+const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g
+
+// Marks, joiners and variation selectors take no cell of their own.
+const ZERO_WIDTH = /^[\p{Mn}\p{Me}\u200b-\u200f\ufe00-\ufe0f]$/u
+// East Asian wide and fullwidth ranges: two cells each in a terminal.
+const WIDE =
+  /^[\u1100-\u115f\u2329\u232a\u2e80-\u303e\u3041-\u33ff\u3400-\u4dbf\u4e00-\u9fff\ua000-\ua4cf\ua960-\ua97f\uac00-\ud7a3\uf900-\ufaff\ufe10-\ufe19\ufe30-\ufe6f\uff00-\uff60\uffe0-\uffe6\u{20000}-\u{3fffd}]$/u
+const PICTOGRAPH = /^\p{Extended_Pictographic}$/u
+
+function cellsOf(ch: string): number {
+  if (ZERO_WIDTH.test(ch)) return 0
+  // Emoji past U+1F000 are wide; older symbols (©, ✓, ●) are one cell unless asked otherwise.
+  if (ch.codePointAt(0)! >= 0x1f000 && PICTOGRAPH.test(ch)) return 2
+  return WIDE.test(ch) ? 2 : 1
+}
+
+/** How many terminal cells `s` takes: two for wide characters and emoji, none for marks. */
+export function widthOf(s: string): number {
+  let w = 0
+  for (const ch of s) w += cellsOf(ch)
+  return w
+}
+
+/**
+ * Cuts to `width` cells with a trailing `…`, never splitting a character. Control
+ * characters become spaces, so whatever it returns is safe to draw.
+ */
 export function truncate(s: string, width: number): string {
   if (width <= 0) return ''
-  const chars = Array.from(s)
-  if (chars.length <= width) return s
-  return chars.slice(0, width - 1).join('') + '…'
+  const clean = s.replace(CONTROL, ' ')
+  if (widthOf(clean) <= width) return clean
+  let out = ''
+  let w = 0
+  for (const ch of clean) {
+    const c = cellsOf(ch)
+    if (w + c > width - 1) break
+    out += ch
+    w += c
+  }
+  return out + '…'
+}
+
+/**
+ * Text from outside crew (a description, an agent type, a tool name) made fit to keep:
+ * one line, runs of whitespace and control characters as one space, at most `max` cells.
+ */
+export function oneLine(s: string, max = 200): string {
+  return truncate(String(s).replace(CONTROL, ' ').replace(/\s+/g, ' ').trim(), max)
 }
 
 /** `1 running · 15 done · 2 failed`, zero parts left out; `idle` when all are zero. */

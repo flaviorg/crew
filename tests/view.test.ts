@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import { completed, EMPTY, spawned, stepped, type AgentRow } from '../hooks/roster.ts'
 import {
   ACCENT, bandFacts, bar, cards, cardsLine, ctxLabel, DOTS, EMPTY_TEXT, FINISHED_CAP, finishedRight,
-  glyphOf, headerFacts, metaLine, statsLine, truncate,
+  glyphOf, headerFacts, metaLine, oneLine, statsLine, truncate, widthOf,
 } from '../hooks/view.ts'
 
 function row(over: Partial<AgentRow> = {}): AgentRow {
@@ -27,8 +27,33 @@ test('truncate', () => {
   expect(truncate('hello', 1)).toBe('…')
   expect(truncate('hello', 0)).toBe('')
   expect(truncate('hello', -3)).toBe('')
-  // Never splits a surrogate pair.
-  expect(truncate('a😀b😀c', 3)).toBe('a😀…')
+  // Never splits a surrogate pair; an emoji takes two cells.
+  expect(truncate('a😀b😀c', 4)).toBe('a😀…')
+  expect(truncate('a😀b😀c', 3)).toBe('a…')
+  // Wide characters count two cells each.
+  expect(truncate('日本語のテキスト', 7)).toBe('日本語…')
+  expect(widthOf(truncate('Fix 🐛 in auth 日本語 and more', 12))).toBeLessThanOrEqual(12)
+  // Control characters are never drawn.
+  expect(truncate('a\u001b[31mb\u0007c', 20)).toBe('a [31mb c')
+  expect(truncate('a\u0085b\u007fc\u2028d', 20)).toBe('a b c d')
+})
+
+test('width in cells', () => {
+  expect(widthOf('hello')).toBe(5)
+  expect(widthOf('日本語')).toBe(6)
+  expect(widthOf('Fix 🐛')).toBe(6)
+  expect(widthOf('e\u0301')).toBe(1)
+  // crew's own glyphs are one cell.
+  expect(widthOf('◆●◉✓✗■≈…━─')).toBe(10)
+})
+
+test('one line', () => {
+  expect(oneLine('Fix the parser\nthen run tests')).toBe('Fix the parser then run tests')
+  expect(oneLine('  col\tcol\r\n  ')).toBe('col col')
+  expect(oneLine('Paint \u001b[31mred\u0007!')).toBe('Paint [31mred !')
+  expect(oneLine('x'.repeat(500))).toHaveLength(200)
+  expect(oneLine('x'.repeat(500), 20)).toBe('x'.repeat(19) + '…')
+  expect(oneLine('')).toBe('')
 })
 
 test('header facts', () => {
