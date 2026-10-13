@@ -75,9 +75,9 @@ function spawn($: any, description: string, type = 'Explore') {
   return $.agent.spawn({ prompt: 'go', description, subagentType: type, parentModel: 'claude-opus-5-5', background: false, fork: false })
 }
 
-async function step($: any, s: Stubs, agentId: string | undefined, usage: any) {
+async function step($: any, s: Stubs, agentId: string | undefined, usage: any, turnId = 't1') {
   s.usage = usage
-  const stream = $.turn.step({ turnId: 't1', index: 0, model: 'claude-haiku-4-5', messageCount: 1, effort: 'high', ...(agentId ? { agentId } : {}) })
+  const stream = $.turn.step({ turnId, index: 0, model: 'claude-haiku-4-5', messageCount: 1, effort: 'high', ...(agentId ? { agentId } : {}) })
   let r = await stream.next()
   while (r.done !== true) r = await stream.next()
   return r.value
@@ -416,6 +416,38 @@ test('reconcile picks up failures', async ($, on) => {
   // ag-2 is not listed (as a workflow agent never is): still running.
   expect(await textOf(ui, { key: 'agent:ag-2' })).not.toContain('✗')
   expect(await ui.find({ text: /◆ crew · 1 running · 1 failed/ })).toBeDefined()
+})
+
+test('a stopped agent that is resumed gets its card back', async ($, on) => {
+  const s = stubs(on)
+  await spawn($, 'Scan the repo')
+  await step($, s, 'ag-1', USAGE)
+  await complete($, 'ag-1', { reason: 'aborted', isAborted: true })
+  await s.clock.advance(5_000)
+  const ui: any = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await textOf(ui, { key: 'done:ag-1' })).toMatch(/^■ Scan the repo/)
+  // The person says "go on": the same agent works again, in a new turn.
+  await step($, s, 'ag-1', USAGE, 't2')
+  await ($.tool.call as any)({ tool: 'Bash', command: 'ls', agentId: 'ag-1' })
+  await s.clock.advance(250)
+  expect(await ui.find({ key: 'done:ag-1' })).toBeUndefined()
+  expect(await textOf(ui, { key: 'agent:ag-1' })).toMatch(/[●◉]Explore · haiku 4\.5 · high · step 2 · Bash/)
+  expect(await ui.find({ text: /◆ crew · 1 running/ })).toBeDefined()
+})
+
+test('a teammate the agent list calls idle files away', async ($, on) => {
+  // A teammate in a terminal pane of its own runs no loop here: no step, no turn end.
+  const s = stubs(on, { list: [{ id: 'ag-1', status: 'idle', description: 'Scout the API', type: 'teammate' }] })
+  await spawn($, 'Scout the API', 'teammate')
+  await s.clock.advance(2_000)
+  await s.clock.advance(3_000)
+  for (const surface of SURFACES) {
+    const band: any = await $.ui.mount({ ...BAND, surface })
+    expect(await band.find({ text: /◆ crew/ })).toBeUndefined()
+    await band.unmount()
+  }
+  const ui: any = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await textOf(ui, { key: 'done:ag-1' })).toMatch(/^✓ Scout the API/)
 })
 
 test('real cost wins in the Cost card', async ($, on) => {

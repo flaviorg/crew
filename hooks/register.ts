@@ -426,7 +426,7 @@ export function register(on: any, options: any) {
     const r = yield* next(e)
     try {
       const at = await $.clock.now()
-      await update($, rosterAtom, (x) => stepped(x, e.agentId, r?.usage, e.effort, at))
+      await update($, rosterAtom, (x) => stepped(x, e.agentId, r?.usage, e.effort, at, e.turnId))
     } catch {
       // A step left uncounted; the response itself is untouched.
     }
@@ -436,7 +436,7 @@ export function register(on: any, options: any) {
   on('turn.complete', async ($: any, e: any, next: any) => {
     if (e.agentId) {
       const at = await $.clock.now()
-      await update($, rosterAtom, (x) => completed(x, e.agentId, { at, reason: e.reason, isAborted: e.isAborted }))
+      await update($, rosterAtom, (x) => completed(x, e.agentId, { at, reason: e.reason, isAborted: e.isAborted, turnId: e.turnId }))
       ensureTicker($) // the celebration needs frames
     }
     return next(e)

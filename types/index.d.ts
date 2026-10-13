@@ -17,6 +17,10 @@ export type AgentRow = {
   workflow: boolean
   startedAt: number
   endedAt?: number
+  /** The turn whose end ended it. */
+  endedTurn?: string
+  /** When a step of it last finished. */
+  seenAt?: number
   status: AgentStatus
   steps: number
   tools: number

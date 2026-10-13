@@ -22,6 +22,10 @@ export type AgentRow = {
   workflow: boolean
   startedAt: number
   endedAt?: number
+  /** The turn whose end ended it: a late result of that turn does not revive it. */
+  endedTurn?: string
+  /** When a step of it last finished: what an agent nothing else reports on is judged by. */
+  seenAt?: number
   status: AgentStatus
   steps: number
   tools: number
@@ -52,6 +56,13 @@ export const CELEBRATE_MS = 3_000
 
 /** Rows kept per session; past this the oldest finished ones go. */
 export const MAX_AGENTS = 500
+
+/**
+ * How long a running agent that `$.agent.list()` does not list may go unheard before it
+ * counts as stopped: nothing else would ever end it (a workflow's remote agent, or a stalled
+ * one retried under a new id), and the band and the clock would run for the session.
+ */
+export const QUIET_MS = 30 * 60_000
 
 const endOf = (a: AgentRow): number => a.endedAt ?? a.startedAt
 
@@ -99,8 +110,10 @@ export function spawned(r: Roster, a: Spawn): Roster {
  * One model request finished. Without an agent id it was the main loop's. A null usage
  * (no response arrived) still counts the step but adds no tokens.
  *
- * A done agent that steps again is running again: a teammate runs one turn per message it
- * receives. Its clock resumes where it stopped, so the time shown is time spent working.
+ * An ended agent that steps in a new turn is running again: a teammate runs one turn per
+ * message it receives, and a message may resume a stopped or failed agent under the same
+ * id. Its clock resumes where it stopped, so the time shown is time spent working. A late
+ * result of the very turn that ended it changes its numbers but not its status.
  */
 export function stepped(
   r: Roster,
@@ -108,20 +121,22 @@ export function stepped(
   usage: TurnUsageLike | null | undefined,
   effort: string | number | undefined,
   at: number,
+  turnId?: string,
 ): Roster {
   if (agentId === undefined) {
     return { ...r, main: usage ? addTokens(r.main, fromUsage(usage)) : r.main, mainSteps: r.mainSteps + 1 }
   }
   return patch(r, agentId, (a) => {
-    let next: AgentRow = { ...a, steps: a.steps + 1 }
+    let next: AgentRow = { ...a, steps: a.steps + 1, seenAt: at }
     if (usage) {
       next.tokens = addTokens(a.tokens, fromUsage(usage))
       next.context = contextOf(usage)
       if (typeof usage.model === 'string' && usage.model !== '') next.model = usage.model
     }
     if (effort !== undefined && String(effort) !== '') next.effort = String(effort)
-    if (a.status === 'done') {
-      const { endedAt: _ended, ...open } = next
+    const sameTurn = turnId !== undefined && turnId === a.endedTurn
+    if (a.status !== 'running' && !sameTurn) {
+      const { endedAt: _ended, endedTurn: _turn, ...open } = next
       next = { ...open, status: 'running', startedAt: at - (endOf(a) - a.startedAt) }
     }
     return next
@@ -136,18 +151,24 @@ export function toolUsed(r: Roster, agentId: string, tool: string): Roster {
  * The agent's turn ended. Its usage is not added: turn.complete repeats the sum of the
  * steps already counted.
  */
-export function completed(r: Roster, agentId: string, e: { at: number; reason?: string; isAborted?: boolean }): Roster {
+export function completed(
+  r: Roster,
+  agentId: string,
+  e: { at: number; reason?: string; isAborted?: boolean; turnId?: string },
+): Roster {
   const status: AgentStatus =
     e.isAborted === true || e.reason === 'aborted' ? 'stopped'
       : e.reason === 'error' || e.reason === 'refusal' ? 'failed'
         : 'done'
-  return patch(r, agentId, (a) => ({ ...a, status, endedAt: e.at }))
+  return patch(r, agentId, (a) => ({ ...a, status, endedAt: e.at, ...(e.turnId === undefined ? {} : { endedTurn: e.turnId }) }))
 }
 
 /**
  * Applies `$.agent.list()`: it is the only place a failure or a kill shows up when no
- * turn.complete comes. Agents it does not list (workflow agents never are) are left alone.
- * Returns the same roster when nothing changed.
+ * turn.complete comes, and the only word on a teammate in a terminal pane of its own, which
+ * runs no loop here (`idle` is its turn's end). An agent it does not list (workflow agents
+ * never are) is left alone until it has gone QUIET_MS unheard; then it counts as stopped,
+ * from when it was last heard. Returns the same roster when nothing changed.
  */
 export function reconciled(r: Roster, list: ReadonlyArray<{ id: string; status: string }>, at: number): Roster {
   const byId = new Map(list.map((x) => [x.id, x.status]))
@@ -155,12 +176,17 @@ export function reconciled(r: Roster, list: ReadonlyArray<{ id: string; status: 
   const agents = r.agents.map((a) => {
     const status = byId.get(a.id)
     let next: AgentStatus | null = null
+    let end = a.endedAt ?? at
     if (status === 'failed' && (a.status === 'running' || a.status === 'done')) next = 'failed'
     if (status === 'killed' && (a.status === 'running' || a.status === 'done')) next = 'stopped'
-    if (status === 'completed' && a.status === 'running') next = 'done'
+    if ((status === 'completed' || status === 'idle') && a.status === 'running') next = 'done'
+    if (status === undefined && a.status === 'running' && at - (a.seenAt ?? a.startedAt) >= QUIET_MS) {
+      next = 'stopped'
+      end = a.seenAt ?? a.startedAt
+    }
     if (next === null) return a
     changed = true
-    return { ...a, status: next, endedAt: a.endedAt ?? at }
+    return { ...a, status: next, endedAt: end }
   })
   return changed ? { ...r, agents } : r
 }

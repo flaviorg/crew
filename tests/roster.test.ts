@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import {
   anyLive, CELEBRATE_MS, completed, counts, EMPTY, estimate, finished, live, MAX_AGENTS, poseOf,
-  reconciled, spawned, stepped, toolUsed, totals, type Roster,
+  QUIET_MS, reconciled, spawned, stepped, toolUsed, totals, type Roster,
 } from '../hooks/roster.ts'
 
 const USAGE = { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 100, cache_creation_input_tokens: 20, model: 'claude-haiku-4-5' }
@@ -110,9 +110,25 @@ test("a teammate's next step runs it again", () => {
   expect('endedAt' in one(r)).toBe(false)
   // It worked 5 ms before, so its clock picks up at 5 ms rather than counting the idle gap.
   expect(one(r).startedAt).toBe(95)
-  // A stopped or failed agent stays ended: a late step result does not revive it.
-  const s = stepped(completed(spawned(EMPTY, agent('a1')), 'a1', { at: 5, isAborted: true }), 'a1', USAGE, undefined, 6)
-  expect(one(s).status).toBe('stopped')
+})
+
+test('a stopped or failed agent that is resumed runs again', () => {
+  for (const end of [{ isAborted: true }, { reason: 'error' }, { reason: 'refusal' }]) {
+    let r = stepped(spawned(EMPTY, agent('a1')), 'a1', USAGE, undefined, 4, 't1')
+    r = completed(r, 'a1', { at: 5, turnId: 't1', ...end })
+    expect(one(r).status).not.toBe('running')
+    // A late result of the turn that just ended does not revive it.
+    expect(one(stepped(r, 'a1', USAGE, undefined, 6, 't1')).status).toBe(one(r).status)
+    // A message resumes it under the same id, in a new turn: it runs again.
+    r = stepped(r, 'a1', USAGE, undefined, 5_005, 't2')
+    expect(one(r).status).toBe('running')
+    expect('endedAt' in one(r)).toBe(false)
+    expect(one(r).startedAt).toBe(5_000)
+    expect(one(r).tokens.input).toBe(20)
+  }
+  // An agent the list called failed or killed runs again on its next step too.
+  const k = reconciled(spawned(EMPTY, agent('a1')), [{ id: 'a1', status: 'killed' }], 10)
+  expect(one(stepped(k, 'a1', USAGE, undefined, 20, 't9')).status).toBe('running')
 })
 
 test('reconcile marks failed and killed', () => {
@@ -125,6 +141,41 @@ test('reconcile marks failed and killed', () => {
   // A done agent the list later calls completed keeps its own end time.
   const d = completed(spawned(EMPTY, agent('a1')), 'a1', { at: 7, reason: 'answer' })
   expect(one(reconciled(d, [{ id: 'a1', status: 'completed' }], 99)).endedAt).toBe(7)
+})
+
+test('reconcile ends a running agent the list calls idle', () => {
+  // A teammate in a terminal pane of its own runs no loop here: the list is all we hear.
+  const r = spawned(spawned(EMPTY, agent('scout@team', 0, 'teammate')), agent('a1'))
+  const after = reconciled(r, [{ id: 'scout@team', status: 'idle' }, { id: 'a1', status: 'running' }], 360_000)
+  expect(one(after, 'scout@team').status).toBe('done')
+  expect(one(after, 'scout@team').endedAt).toBe(360_000)
+  expect(one(after, 'a1').status).toBe('running')
+  // An idle teammate already marked done by its turn end keeps its own end time.
+  const d = completed(r, 'a1', { at: 7, reason: 'answer' })
+  expect(one(reconciled(d, [{ id: 'a1', status: 'idle' }], 99), 'a1').endedAt).toBe(7)
+  // Waiting and pending are not ends.
+  expect(reconciled(r, [{ id: 'a1', status: 'waiting' }, { id: 'scout@team', status: 'pending' }], 9)).toBe(r)
+})
+
+test('an unlisted agent silent for a long time is stopped', () => {
+  // A workflow agent is never listed; one never heard from (a remote one, a stalled one
+  // retried under a new id) would otherwise run forever.
+  let r = spawned(spawned(EMPTY, { ...agent('wf', 0), workflow: true }), { ...agent('wf2', 0), workflow: true })
+  r = stepped(r, 'wf2', USAGE, undefined, 60_000)
+  expect(reconciled(r, [], QUIET_MS - 1)).toBe(r)
+  const after = reconciled(r, [], QUIET_MS)
+  expect(one(after, 'wf').status).toBe('stopped')
+  // It ended when it was last heard from.
+  expect(one(after, 'wf').endedAt).toBe(0)
+  expect(one(after, 'wf2').status).toBe('running')
+  expect(one(reconciled(r, [], 60_000 + QUIET_MS), 'wf2').status).toBe('stopped')
+  expect(one(reconciled(r, [], 60_000 + QUIET_MS), 'wf2').endedAt).toBe(60_000)
+  // A listed agent is the list's to judge, however quiet it is.
+  expect(one(reconciled(r, [{ id: 'wf', status: 'waiting' }], QUIET_MS * 2), 'wf').status).toBe('running')
+  // One that works again after all picks up where it went quiet.
+  const back = stepped(after, 'wf', USAGE, undefined, QUIET_MS + 10_000, 't2')
+  expect(one(back, 'wf').status).toBe('running')
+  expect(one(back, 'wf').startedAt).toBe(QUIET_MS + 10_000)
 })
 
 test('reconcile leaves unlisted agents alone', () => {
