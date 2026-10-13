@@ -1,0 +1,215 @@
+import { expect, test } from 'claude-code/testing'
+import {
+  anyLive, CELEBRATE_MS, completed, counts, EMPTY, estimate, finished, live, MAX_AGENTS, poseOf,
+  reconciled, spawned, stepped, toolUsed, totals, type Roster,
+} from '../hooks/roster.ts'
+
+const USAGE = { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 100, cache_creation_input_tokens: 20, model: 'claude-haiku-4-5' }
+
+function agent(id: string, at = 0, type = 'Explore') {
+  return { id, description: 'scan ' + id, type, model: 'claude-haiku-4-5', background: false, workflow: false, at }
+}
+
+function deepFreeze<T>(v: T): T {
+  if (v && typeof v === 'object') {
+    for (const k of Object.keys(v)) deepFreeze((v as any)[k])
+    Object.freeze(v)
+  }
+  return v
+}
+
+const one = (r: Roster, id = 'a1') => r.agents.find((a) => a.id === id)!
+
+test('spawn adds a running agent', () => {
+  const r = spawned(EMPTY, agent('a1', 1_000))
+  expect(r.agents).toHaveLength(1)
+  expect(one(r)).toEqual({
+    id: 'a1', description: 'scan a1', type: 'Explore', model: 'claude-haiku-4-5', background: false, workflow: false,
+    startedAt: 1_000, status: 'running', steps: 0, tools: 0, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, context: 0,
+  })
+  expect(EMPTY.agents).toHaveLength(0)
+})
+
+test('duplicate spawn is ignored', () => {
+  const r = spawned(spawned(EMPTY, agent('a1', 1)), { ...agent('a1', 2), description: 'other' })
+  expect(r.agents).toHaveLength(1)
+  expect(one(r).description).toBe('scan a1')
+  expect(one(r).startedAt).toBe(1)
+})
+
+test('steps add tokens and context', () => {
+  let r = spawned(EMPTY, { ...agent('a1'), model: '' })
+  r = stepped(r, 'a1', USAGE, 'high', 10)
+  r = stepped(r, 'a1', USAGE, 'high', 20)
+  expect(one(r).tokens).toEqual({ input: 20, output: 10, cacheRead: 200, cacheWrite: 40 })
+  expect(one(r).context).toBe(130)
+  expect(one(r).steps).toBe(2)
+  expect(one(r).model).toBe('claude-haiku-4-5')
+  expect(one(r).effort).toBe('high')
+  expect(stepped(r, 'a1', USAGE, 3, 30).agents[0]!.effort).toBe('3')
+})
+
+test('main steps go to main', () => {
+  const r = stepped(spawned(EMPTY, agent('a1')), undefined, USAGE, undefined, 5)
+  expect(r.main).toEqual({ input: 10, output: 5, cacheRead: 100, cacheWrite: 20 })
+  expect(r.mainSteps).toBe(1)
+  expect(one(r).steps).toBe(0)
+})
+
+test('an unknown agent creates nothing', () => {
+  const r = stepped(EMPTY, 'ghost', USAGE, undefined, 5)
+  expect(r.agents).toHaveLength(0)
+  expect(r.main).toEqual(EMPTY.main)
+  expect(toolUsed(EMPTY, 'ghost', 'Bash').agents).toHaveLength(0)
+  expect(completed(EMPTY, 'ghost', { at: 1, reason: 'answer' }).agents).toHaveLength(0)
+})
+
+test('null usage is ignored', () => {
+  let r = stepped(spawned(EMPTY, agent('a1')), 'a1', USAGE, undefined, 1)
+  r = stepped(r, 'a1', null, undefined, 2)
+  r = stepped(r, 'a1', undefined, undefined, 3)
+  expect(one(r).steps).toBe(3)
+  expect(one(r).tokens).toEqual({ input: 10, output: 5, cacheRead: 100, cacheWrite: 20 })
+  expect(one(r).context).toBe(130)
+  const m = stepped(EMPTY, undefined, null, undefined, 1)
+  expect(m.mainSteps).toBe(1)
+  expect(m.main).toEqual(EMPTY.main)
+  expect(Number.isNaN(m.main.input)).toBe(false)
+})
+
+test('tools count and remember the last', () => {
+  let r = spawned(EMPTY, agent('a1'))
+  r = toolUsed(r, 'a1', 'Read')
+  r = toolUsed(r, 'a1', 'Bash')
+  expect(one(r).tools).toBe(2)
+  expect(one(r).lastTool).toBe('Bash')
+})
+
+test('complete reasons', () => {
+  const r = spawned(EMPTY, agent('a1'))
+  expect(one(completed(r, 'a1', { at: 9, reason: 'answer' })).status).toBe('done')
+  expect(one(completed(r, 'a1', { at: 9 })).status).toBe('done')
+  expect(one(completed(r, 'a1', { at: 9, reason: 'error' })).status).toBe('failed')
+  expect(one(completed(r, 'a1', { at: 9, reason: 'refusal' })).status).toBe('failed')
+  expect(one(completed(r, 'a1', { at: 9, reason: 'aborted' })).status).toBe('stopped')
+  expect(one(completed(r, 'a1', { at: 9, reason: 'answer', isAborted: true })).status).toBe('stopped')
+  expect(one(completed(r, 'a1', { at: 9 })).endedAt).toBe(9)
+})
+
+test('complete does not double count', () => {
+  let r = stepped(spawned(EMPTY, agent('a1')), 'a1', USAGE, undefined, 1)
+  // turn.complete carries the turn's summed usage; completed() takes none, so tokens stay.
+  r = completed(r, 'a1', { at: 2, reason: 'answer' })
+  expect(one(r).tokens).toEqual({ input: 10, output: 5, cacheRead: 100, cacheWrite: 20 })
+})
+
+test("a teammate's next step runs it again", () => {
+  let r = completed(spawned(EMPTY, agent('a1')), 'a1', { at: 5, reason: 'answer' })
+  r = stepped(r, 'a1', USAGE, undefined, 100)
+  expect(one(r).status).toBe('running')
+  expect('endedAt' in one(r)).toBe(false)
+  // It worked 5 ms before, so its clock picks up at 5 ms rather than counting the idle gap.
+  expect(one(r).startedAt).toBe(95)
+  // A stopped or failed agent stays ended: a late step result does not revive it.
+  const s = stepped(completed(spawned(EMPTY, agent('a1')), 'a1', { at: 5, isAborted: true }), 'a1', USAGE, undefined, 6)
+  expect(one(s).status).toBe('stopped')
+})
+
+test('reconcile marks failed and killed', () => {
+  let r = spawned(spawned(spawned(EMPTY, agent('a1')), agent('a2')), agent('a3'))
+  r = reconciled(r, [{ id: 'a1', status: 'failed' }, { id: 'a2', status: 'killed' }, { id: 'a3', status: 'completed' }], 50)
+  expect(one(r, 'a1').status).toBe('failed')
+  expect(one(r, 'a2').status).toBe('stopped')
+  expect(one(r, 'a3').status).toBe('done')
+  expect(one(r, 'a1').endedAt).toBe(50)
+  // A done agent the list later calls completed keeps its own end time.
+  const d = completed(spawned(EMPTY, agent('a1')), 'a1', { at: 7, reason: 'answer' })
+  expect(one(reconciled(d, [{ id: 'a1', status: 'completed' }], 99)).endedAt).toBe(7)
+})
+
+test('reconcile leaves unlisted agents alone', () => {
+  const r = spawned(spawned(EMPTY, { ...agent('wf'), workflow: true }), agent('a1'))
+  const after = reconciled(r, [{ id: 'a1', status: 'running' }], 50)
+  expect(one(after, 'wf').status).toBe('running')
+  expect(one(after, 'a1').status).toBe('running')
+  // Nothing changed, so the same roster comes back and nothing needs writing.
+  expect(after).toBe(r)
+  expect(reconciled(r, [], 50)).toBe(r)
+})
+
+test('live keeps a finished agent for 3 s', () => {
+  const t = 10_000
+  let r = spawned(spawned(EMPTY, agent('a1', 0)), agent('a2', 1))
+  r = completed(r, 'a1', { at: t, reason: 'answer' })
+  expect(live(r, t + CELEBRATE_MS - 1).map((a) => a.id)).toEqual(['a1', 'a2'])
+  expect(live(r, t + CELEBRATE_MS).map((a) => a.id)).toEqual(['a2'])
+  expect(finished(r, t + CELEBRATE_MS - 1)).toHaveLength(0)
+  expect(finished(r, t + CELEBRATE_MS).map((a) => a.id)).toEqual(['a1'])
+  expect(anyLive(r, t + CELEBRATE_MS)).toBe(true)
+  r = completed(r, 'a2', { at: t + 1, reason: 'answer' })
+  expect(anyLive(r, t + 1 + CELEBRATE_MS)).toBe(false)
+  // Finished is newest first.
+  expect(finished(r, t + 1 + CELEBRATE_MS).map((a) => a.id)).toEqual(['a2', 'a1'])
+})
+
+test('poseOf', () => {
+  const r = spawned(EMPTY, agent('a1'))
+  expect(poseOf(one(r))).toBe('working')
+  expect(poseOf(one(completed(r, 'a1', { at: 1, reason: 'answer' })))).toBe('done')
+  expect(poseOf(one(completed(r, 'a1', { at: 1, reason: 'error' })))).toBe('failed')
+  expect(poseOf(one(completed(r, 'a1', { at: 1, isAborted: true })))).toBe('failed')
+})
+
+test('counts', () => {
+  let r = EMPTY
+  for (const id of ['a', 'b', 'c', 'd', 'e']) r = spawned(r, agent(id))
+  r = completed(r, 'a', { at: 1, reason: 'answer' })
+  r = completed(r, 'b', { at: 1, reason: 'answer' })
+  r = completed(r, 'c', { at: 1, reason: 'error' })
+  r = completed(r, 'd', { at: 1, isAborted: true })
+  expect(counts(r)).toEqual({ running: 1, done: 2, failed: 1, stopped: 1 })
+  expect(counts(EMPTY)).toEqual({ running: 0, done: 0, failed: 0, stopped: 0 })
+})
+
+test('estimate uses the price table', () => {
+  let r = spawned(EMPTY, agent('a1'))
+  r = stepped(r, 'a1', { input_tokens: 1_000_000, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, model: 'claude-haiku-4-5' }, undefined, 1)
+  expect(estimate(one(r), {})).toBe(1)
+  expect(estimate({ ...one(r), model: 'claude-fable-5-1' }, {})).toBe(null)
+  expect(estimate({ ...one(r), model: 'claude-fable-5-1' }, { fable: { input: 2, output: 0, cacheRead: 0, cacheWrite: 0 } })).toBe(2)
+})
+
+test('totals adds main and agents', () => {
+  const M = { input_tokens: 1_000_000, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
+  let r = spawned(EMPTY, agent('a1'))
+  r = stepped(r, 'a1', { ...M, model: 'claude-haiku-4-5' }, undefined, 1)
+  r = stepped(r, undefined, { ...M, model: 'claude-opus-5-5' }, undefined, 2)
+  expect(totals(r, {}, 'claude-opus-5-5')).toEqual({ tokens: 2_000_000, estUsd: 6 })
+  // The main loop on an unknown model is left out of the estimate, not counted as zero.
+  expect(totals(r, {}, 'mystery')).toEqual({ tokens: 2_000_000, estUsd: 1 })
+  expect(totals(EMPTY, {}, '').estUsd).toBe(null)
+})
+
+test('drops oldest finished past MAX_AGENTS', () => {
+  let r = spawned(spawned(EMPTY, agent('old-1', 0)), agent('old-2', 1))
+  r = completed(r, 'old-1', { at: 2, reason: 'answer' })
+  for (let i = 0; i < MAX_AGENTS - 1; i++) r = spawned(r, agent('n' + i, 10 + i))
+  expect(r.agents).toHaveLength(MAX_AGENTS)
+  expect(r.agents.some((a) => a.id === 'old-1')).toBe(false)
+  // A running agent is never dropped, even when it is the oldest.
+  expect(r.agents[0]!.id).toBe('old-2')
+})
+
+test('inputs are never changed', () => {
+  const r = deepFreeze(stepped(spawned(EMPTY, agent('a1')), 'a1', USAGE, 'low', 1))
+  const ops = [
+    () => spawned(r, agent('a2')),
+    () => stepped(r, 'a1', USAGE, 'high', 2),
+    () => stepped(r, undefined, USAGE, undefined, 2),
+    () => toolUsed(r, 'a1', 'Bash'),
+    () => completed(r, 'a1', { at: 3, reason: 'answer' }),
+    () => reconciled(r, [{ id: 'a1', status: 'failed' }], 4),
+  ]
+  for (const op of ops) expect(op).not.toThrow()
+  expect(one(r).steps).toBe(1)
+})
