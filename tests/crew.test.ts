@@ -738,6 +738,30 @@ test('a docked pane keeps a column clear of the dock\'s border', async ($, on) =
   }
 })
 
+test('at the dock\'s narrowest the Finished title and its button share one line', async ($, on) => {
+  const s = stubs(on)
+  for (let i = 0; i < 12; i++) await spawn($, 'Agent ' + i)
+  await complete($, 'ag-1')
+  await s.clock.advance(3_000)
+  // The engine's narrowest dock leaves 23 cells; crew pads one.
+  for (const cols of [23, 24, 26]) {
+    const ui: any = await $.ui.mount({ ...DOCK, props: { ...DOCK.props, bodyColumns: cols }, surface: 'terminal' })
+    expect(needs(await ui.drawn())).toBeLessThanOrEqual(cols)
+    await ui.unmount()
+  }
+  for (let i = 2; i <= 12; i++) await complete($, 'ag-' + i)
+  await s.clock.advance(3_000)
+  for (const cols of [23, 24]) {
+    const ui: any = await $.ui.mount({ ...DOCK, props: { ...DOCK.props, bodyColumns: cols }, surface: 'terminal' })
+    // The idle line below is prose in a shrinking box and wraps; the title row must not.
+    expect(await ui.find({ type: 'Text', text: 'FINISHED · 12' })).toBeDefined()
+    const button = await ui.find({ key: 'collapse' })
+    expect(button.props.label).toBe('Hide')
+    expect(widthOf('FINISHED · 12') + 1 + needs(button)).toBeLessThanOrEqual(cols - 1)
+    await ui.unmount()
+  }
+})
+
 test('stat cards share the width evenly', async ($, on) => {
   stubs(on, { cost: 12.5 })
   for (const cols of [36, 70, 100]) {

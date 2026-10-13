@@ -221,3 +221,13 @@ export function glyphOf(status: AgentStatus, frame: number): { char: string; col
   if (status === 'stopped') return { char: '■', color: 'warning' }
   return { char: DOTS[frame % DOTS.length]!, color: ACCENT }
 }
+
+/**
+ * The Finished section's fold button: `Collapse` or `Expand`, or `Hide` or `Show` when the
+ * section's title and the full label don't fit the pane's width together.
+ */
+export function foldLabel(count: number, collapsed: boolean, width: number): string {
+  const long = collapsed ? 'Expand' : 'Collapse'
+  if (widthOf(`FINISHED · ${count}`) + 1 + widthOf(`c: ${long}`) <= width) return long
+  return collapsed ? 'Show' : 'Hide'
+}

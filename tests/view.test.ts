@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import { completed, EMPTY, spawned, stepped, type AgentRow } from '../hooks/roster.ts'
 import {
-  ACCENT, bandFacts, bar, cards, cardsLine, ctxLabel, DOTS, EMPTY_TEXT, FINISHED_CAP, finishedLine, finishedRight,
+  foldLabel, ACCENT, bandFacts, bar, cards, cardsLine, ctxLabel, DOTS, EMPTY_TEXT, FINISHED_CAP, finishedLine, finishedRight,
   fit, glyphOf, headerFacts, metaLine, oneLine, statsLine, truncate, widthOf,
 } from '../hooks/view.ts'
 
@@ -179,4 +179,13 @@ test('glyphs', () => {
   expect(glyphOf('done', 3)).toEqual({ char: '✓', color: 'success' })
   expect(glyphOf('failed', 3)).toEqual({ char: '✗', color: 'error' })
   expect(glyphOf('stopped', 3)).toEqual({ char: '■', color: 'warning' })
+})
+
+test('the fold button keeps its full label while it fits beside the title', async () => {
+  expect(foldLabel(4, false, 60)).toBe('Collapse')
+  expect(foldLabel(4, true, 60)).toBe('Expand')
+  // 'FINISHED · 4' and 'c: Collapse' need 12 + 1 + 11 cells.
+  expect(foldLabel(4, false, 24)).toBe('Collapse')
+  expect(foldLabel(4, false, 23)).toBe('Hide')
+  expect(foldLabel(40, true, 20)).toBe('Show')
 })

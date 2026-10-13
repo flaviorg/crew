@@ -15,7 +15,7 @@ import {
   encodeCells, FRAME_MS, frameAt, kindOf, paletteFor, phaseOf, spriteSvg, SPRITE_COLUMNS, SPRITE_ROWS, type Pose,
 } from './sprites.ts'
 import {
-  ACCENT, bandFacts, bar, cards, cardsLine, ctxLabel, DOTS, EMPTY_TEXT, FINISHED_CAP, finishedLine, glyphOf,
+  ACCENT, bandFacts, bar, cards, cardsLine, ctxLabel, DOTS, EMPTY_TEXT, FINISHED_CAP, finishedLine, foldLabel, glyphOf,
   headerFacts, metaLine, oneLine, QUIET_TEXT, statsLine, truncate,
 } from './view.ts'
 
@@ -106,8 +106,8 @@ async function clockNow($: any): Promise<number> {
 
 type PaneState = 'shown' | 'behind' | 'closed'
 
-// Crew's pane: shown, open but not shown (a tab behind another pane in a fullscreen dock,
-// or waiting undrawn), or not open; null when the host cannot say.
+// Crew's pane: shown, open but not shown (a tab behind another pane, docked or inline, or
+// waiting undrawn), or not open; null when the host cannot say.
 async function paneState($: any): Promise<PaneState | null> {
   try {
     const pane = (await $.ui.panes()).find((p: any) => p.id === PANE)
@@ -168,9 +168,9 @@ async function openPane($: any) {
   ensureTicker($, await clockNow($))
 }
 
-// Shows the pane at the person's word. A fullscreen dock shows one pane at a time, the rest
-// tabs behind it, and an open of an open id only retitles it: a pane behind is closed and
-// opened again, which brings it to the front. A refused close rejects.
+// Shows the pane at the person's word. Claude Code shows one pane at a time, docked or above
+// the prompt, the rest tabs behind it, and an open of an open id only retitles it: a pane
+// behind is closed and opened again, which brings it to the front. A refused close rejects.
 async function showPane($: any, state: PaneState | null) {
   if (state === 'behind') await $.ui.close({ id: PANE })
   await openPane($)
@@ -356,7 +356,7 @@ function finishedSection($: any, e: any, done: AgentRow[], width: number) {
         key: 'collapse',
         plain: true,
         hotkey: collapsed ? 'e' : 'c',
-        label: collapsed ? 'Expand' : 'Collapse',
+        label: foldLabel(done.length, collapsed, width),
         onPress: () => toggleCollapsed($),
       }),
     ],
