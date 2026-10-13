@@ -1,0 +1,448 @@
+import { expect, mock, test } from 'claude-code/testing'
+
+const PANE = {
+  plugin: 'crew',
+  component: 'Pane',
+  requestId: 'crew',
+  viewport: { columns: 120, rows: 60 },
+  props: { title: 'Crew', isFocused: false, bodyColumns: 70, placement: 'dock', scroll: { offset: 0, bodyRows: 200 }, view: {} },
+} as const
+
+const BAND = {
+  plugin: 'crew',
+  component: 'AbovePrompt',
+  viewport: { columns: 120, rows: 60 },
+  props: { hasSurvey: false, isWorking: true, maxRows: 6, bodyColumns: 80, scroll: { offset: 0, bodyRows: 5 }, view: {} },
+} as const
+
+const SURFACES = ['terminal', 'desktop'] as const
+
+const USAGE = { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 100, cache_creation_input_tokens: 20, model: 'claude-haiku-4-5' }
+
+type Stubs = {
+  clock: any
+  opens: any[]
+  closes: string[]
+  toasts: string[]
+  stored: Record<string, unknown>
+  usage: any
+  answer: any
+}
+
+// Everything the mod may call on $, answered in memory, plus the engine beneath its hooks.
+function stubs(on: any, o: { placed?: boolean; list?: any[]; cost?: number; store?: Record<string, unknown> } = {}): Stubs {
+  const s: Stubs = { clock: null, opens: [], closes: [], toasts: [], stored: { ...(o.store ?? {}) }, usage: USAGE, answer: null }
+  const open = new Set<string>()
+  let n = 0
+  on('session.usage', () => ({ value: { startedAt: 0, context: { window: 200_000 }, rateLimits: [], ...(o.cost === undefined ? {} : { cost: { usd: o.cost } }) } }))
+  on('session.model', () => ({ value: 'claude-opus-5-5' }))
+  on('agent.list', () => ({ value: o.list ?? [] }))
+  on('ui.open', ($: any, e: any) => {
+    s.opens.push(e)
+    open.add(e.id)
+    return { value: o.placed === false ? { isPlaced: false, reason: 'the terminal is 100 columns; 144 are needed' } : { isPlaced: true } }
+  })
+  on('ui.close', ($: any, e: any) => { s.closes.push(e.id); open.delete(e.id); return { value: undefined } })
+  on('ui.panes', () => ({
+    value: [...open].map((id) => ({ id, title: 'Crew', isShown: o.placed !== false, isFocused: false, isPlaced: o.placed !== false })),
+  }))
+  on('ui.toast', ($: any, e: any) => { s.toasts.push(e.text); return { value: undefined } })
+  on('command.register', () => ({ value: { command: 'crew' } }))
+  on('store.get', ($: any, e: any) => ({ value: s.stored[e.key] }))
+  on('store.set', ($: any, e: any) => { s.stored[e.key] = e.value; return { value: undefined } })
+  s.clock = mock.clock(on, { now: 0 })
+  on('agent.spawn', () => s.answer ?? { model: 'claude-haiku-4-5', agentId: 'ag-' + ++n })
+  on('tool.call', () => ({ result: 'ok' }))
+  on('turn.step', async function* ($: any, e: any) {
+    yield { kind: 'stop', stopReason: 'end_turn', usage: s.usage }
+    return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn', usage: s.usage }
+  })
+  on('turn.complete', () => ({ text: '' }))
+  on('session.start', ($: any, e: any) => ({ cwd: e.cwd }))
+  on('ui.render', () => ({ type: 'Text', props: {}, children: ['engine'] }))
+  return s
+}
+
+function spawn($: any, description: string, type = 'Explore') {
+  return $.agent.spawn({ prompt: 'go', description, subagentType: type, parentModel: 'claude-opus-5-5', background: false, fork: false })
+}
+
+async function step($: any, s: Stubs, agentId: string | undefined, usage: any) {
+  s.usage = usage
+  const stream = $.turn.step({ turnId: 't1', index: 0, model: 'claude-haiku-4-5', messageCount: 1, effort: 'high', ...(agentId ? { agentId } : {}) })
+  let r = await stream.next()
+  while (r.done !== true) r = await stream.next()
+  return r.value
+}
+
+function complete($: any, agentId: string, more: Record<string, unknown> = { reason: 'answer' }) {
+  return $.turn.complete({ turnId: 't1', answer: 'ok', durationMs: 1_000, isAborted: false, agentId, ...more })
+}
+
+const textOf = async (ui: any, query: any) => (await ui.find(query))?.text
+
+// Boxes whose key starts with a prefix (find matches a key exactly).
+const keyed = async (ui: any, prefix: string) => (await ui.findAll({ type: 'Box' })).filter((x: any) => String(x.key ?? '').startsWith(prefix))
+
+test('a spawn shows a card with a mascot', async ($, on) => {
+  stubs(on)
+  const r: any = await spawn($, 'Scan the repo')
+  expect(r).toEqual({ model: 'claude-haiku-4-5', agentId: 'ag-1' })
+  for (const surface of [...SURFACES, 'mobile'] as const) {
+    const ui: any = await $.ui.mount({ ...PANE, surface })
+    expect(await ui.find({ type: 'Text', text: 'Scan the repo' })).toBeDefined()
+    expect(await ui.find({ text: /◆ crew · 1 running/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'RUNNING · 1' })).toBeDefined()
+    expect(await ui.find({ key: 'agent:ag-1' })).toBeDefined()
+    if (surface === 'terminal') {
+      const raster = await ui.find({ type: 'Raster', key: 'm:ag-1' })
+      expect(raster.props.columns).toBe(11)
+      expect(raster.props.rows).toBe(5)
+    } else {
+      const svg = await ui.find({ type: 'Svg' })
+      expect(svg.props.isInteractive).toBe(true)
+      expect(svg.props.alt).toBe('Scan the repo — working')
+      expect(await ui.find({ type: 'Raster' })).toBeUndefined()
+    }
+    await ui.unmount()
+  }
+})
+
+test('the empty pane says what will happen', async ($, on) => {
+  stubs(on)
+  for (const surface of SURFACES) {
+    const ui: any = await $.ui.mount({ ...PANE, surface })
+    expect(await ui.find({ type: 'Text', text: 'No subagents yet — they appear here when Claude delegates work.' })).toBeDefined()
+    expect(await ui.find({ text: /◆ crew · idle/ })).toBeDefined()
+    expect(await textOf(ui, { key: 'card:tokens' })).toBe('Tokens0')
+    expect(await ui.find({ type: surface === 'terminal' ? 'Raster' : 'Svg' })).toBeDefined()
+    await ui.unmount()
+  }
+})
+
+test('denied spawn adds nothing', async ($, on) => {
+  const s = stubs(on)
+  s.answer = { deny: 'no' }
+  const r: any = await spawn($, 'Scan the repo')
+  expect(r).toEqual({ deny: 'no' })
+  expect(s.opens).toHaveLength(0)
+  const ui: any = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /No subagents yet/ })).toBeDefined()
+  expect(await ui.find({ text: /RUNNING/ })).toBeUndefined()
+})
+
+test('a spawn without an agent id adds nothing', async ($, on) => {
+  const s = stubs(on)
+  s.answer = { model: 'claude-haiku-4-5' }
+  expect(await spawn($, 'Scan the repo')).toEqual({ model: 'claude-haiku-4-5' })
+  const ui: any = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /No subagents yet/ })).toBeDefined()
+})
+
+test('steps fill tokens and the context bar', async ($, on) => {
+  const s = stubs(on)
+  await spawn($, 'Scan the repo')
+  const result: any = await step($, s, 'ag-1', USAGE)
+  expect(result.usage).toEqual(USAGE)
+  let ui: any = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: 'ctx 0%' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^135 tok · / })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Explore · haiku 4.5 · high · step 1' })).toBeDefined()
+  await ui.unmount()
+  await step($, s, 'ag-1', { input_tokens: 2_000, output_tokens: 500, cache_read_input_tokens: 40_000, cache_creation_input_tokens: 0, model: 'claude-haiku-4-5' })
+  ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: 'ctx 21%' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^42\.6k tok · / })).toBeDefined()
+  // The bar is 47 columns at this width; 21% of it is filled.
+  expect(await textOf(ui, { type: 'Text', text: /^━+$/ })).toBe('━'.repeat(Math.round(0.21 * (70 - 11 - 12))))
+})
+
+test('main-loop steps count toward the Tokens card only', async ($, on) => {
+  const s = stubs(on)
+  await step($, s, undefined, USAGE)
+  const ui: any = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await textOf(ui, { key: 'card:tokens' })).toBe('Tokens135')
+  expect(await ui.find({ type: 'Text', text: /No subagents yet/ })).toBeDefined()
+})
+
+test('null usage keeps tokens', async ($, on) => {
+  const s = stubs(on)
+  await spawn($, 'Scan the repo')
+  await step($, s, 'ag-1', USAGE)
+  await step($, s, 'ag-1', null)
+  await complete($, 'ag-1', { reason: 'answer', usage: null })
+  await complete($, 'ag-1', { reason: 'answer' })
+  const ui: any = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /^135 tok · / })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /step 2/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /NaN/ })).toBeUndefined()
+})
+
+test('tool calls show the last tool', async ($, on) => {
+  stubs(on)
+  await spawn($, 'Scan the repo')
+  const out = await ($.tool.call as any)({ tool: 'Bash', command: 'ls', agentId: 'ag-1' })
+  expect(out).toEqual({ result: 'ok' })
+  await ($.tool.call as any)({ tool: 'Read', file_path: '/w/a.ts' })
+  const ui: any = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /· Bash$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: / · 1 tool · / })).toBeDefined()
+})
+
+test('a finished agent celebrates, then files away', async ($, on) => {
+  const s = stubs(on)
+  await spawn($, 'Scan the repo')
+  const ui: any = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await complete($, 'ag-1')
+  await s.clock.advance(250)
+  expect(await ui.find({ type: 'Text', text: '✓' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'RUNNING · 1' })).toBeDefined()
+  await s.clock.advance(2_750)
+  expect(await ui.find({ type: 'Text', text: 'RUNNING · 1' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'FINISHED · 1' })).toBeDefined()
+  expect(await textOf(ui, { key: 'done:ag-1' })).toMatch(/^✓ Scan the repo.*haiku 4\.5 · 0 · ≈\$0\.00 · 0:00$/)
+  expect(await ui.find({ text: /◆ crew · 1 done/ })).toBeDefined()
+})
+
+test('failed and stopped', async ($, on) => {
+  stubs(on)
+  await spawn($, 'One')
+  await spawn($, 'Two')
+  await complete($, 'ag-1', { reason: 'error' })
+  await complete($, 'ag-2', { reason: 'answer', isAborted: true })
+  for (const surface of SURFACES) {
+    const ui: any = await $.ui.mount({ ...PANE, surface })
+    expect(await textOf(ui, { key: 'agent:ag-1' })).toContain('✗')
+    expect(await textOf(ui, { key: 'agent:ag-2' })).toContain('■')
+    expect(await ui.find({ text: /◆ crew · 1 failed · 1 stopped/ })).toBeDefined()
+    if (surface === 'desktop') expect((await ui.findAll({ type: 'Svg' })).map((x: any) => x.props.alt)).toEqual(['One — failed', 'Two — failed'])
+    await ui.unmount()
+  }
+})
+
+test('the mascot animates', async ($, on) => {
+  const s = stubs(on)
+  await spawn($, 'Scan the repo')
+  const ui: any = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const before = (await ui.find({ type: 'Raster' })).props.cells
+  const dot = await textOf(ui, { type: 'Text', text: /^[●◉○]$/ })
+  await s.clock.advance(250)
+  const after = (await ui.find({ type: 'Raster' })).props.cells
+  expect(after).not.toBe(before)
+  expect(await textOf(ui, { type: 'Text', text: /^[●◉○]$/ })).not.toBe(dot)
+})
+
+test('auto-opens once, toasts once when it cannot place', async ($, on) => {
+  const s = stubs(on, { placed: false })
+  await spawn($, 'One')
+  await spawn($, 'Two')
+  expect(s.opens).toEqual([{ id: 'crew', title: 'Crew', columns: 60 }])
+  expect(s.toasts).toEqual(['crew: run /crew to watch your subagents'])
+})
+
+test('auto-open placed shows no toast', async ($, on) => {
+  const s = stubs(on)
+  await spawn($, 'One')
+  expect(s.opens).toHaveLength(1)
+  expect(s.toasts).toHaveLength(0)
+})
+
+test('autoOpen off', { options: { autoOpen: 'off' } }, async ($, on) => {
+  const s = stubs(on)
+  await spawn($, 'One')
+  expect(s.opens).toHaveLength(0)
+  expect(s.toasts).toHaveLength(0)
+})
+
+test('the band shows while agents run', async ($, on) => {
+  const s = stubs(on)
+  await spawn($, 'Scan the repo')
+  await spawn($, 'Plan it', 'Plan')
+  await s.clock.advance(10_000)
+  for (const surface of SURFACES) {
+    const ui: any = await $.ui.mount({ ...BAND, surface })
+    expect(await ui.find({ type: 'Text', text: '◆ crew ' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: / 2 running · 0:10 · ≈\$0\.00 / })).toBeDefined()
+    const button = await ui.find({ type: 'Button', key: 'band-open' })
+    expect(button.props.hotkey).toBe('o')
+    expect(await ui.find({ type: 'Text', text: 'engine' })).toBeDefined()
+    // One dot per live agent, in its mascot's color.
+    expect((await ui.findAll({ type: 'Text', text: /^[●◉]$/ })).map((x: any) => x.props.color)).toEqual(['#35B5AC', '#9B7BEA'])
+    await ui.unmount()
+  }
+  const ui: any = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await ui.press({ key: 'band-open' })
+  expect(s.opens.length).toBe(2)
+  await complete($, 'ag-1')
+  await complete($, 'ag-2')
+  await s.clock.advance(3_000)
+  expect(await ui.find({ text: /◆ crew/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'engine' })).toBeDefined()
+})
+
+test('the band yields to a survey', async ($, on) => {
+  stubs(on)
+  await spawn($, 'Scan the repo')
+  const ui: any = await $.ui.mount({ ...BAND, props: { ...BAND.props, hasSurvey: true }, surface: 'terminal' })
+  expect(await ui.find({ text: /◆ crew/ })).toBeUndefined()
+})
+
+test('band off', { options: { band: 'off' } }, async ($, on) => {
+  stubs(on)
+  await spawn($, 'Scan the repo')
+  for (const surface of SURFACES) {
+    const ui: any = await $.ui.mount({ ...BAND, surface })
+    expect(await ui.find({ text: /◆ crew/ })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: 'engine' })).toBeDefined()
+    await ui.unmount()
+  }
+})
+
+test('/crew toggles', async ($, on) => {
+  const s = stubs(on)
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  expect(await $.command.run({ command: 'crew', args: '' })).toEqual({})
+  expect(s.opens).toEqual([{ id: 'crew', title: 'Crew', columns: 60 }])
+  expect(await $.command.run({ command: 'crew', args: '' })).toEqual({})
+  expect(s.closes).toEqual(['crew'])
+  await $.command.run({ command: 'crew', args: '' })
+  expect(s.opens).toHaveLength(2)
+})
+
+test('collapse sticks', async ($, on) => {
+  const s = stubs(on)
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  await spawn($, 'Scan the repo')
+  await complete($, 'ag-1')
+  await s.clock.advance(3_000)
+  const ui: any = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ key: 'done:ag-1' })).toBeDefined()
+  const button = await ui.find({ type: 'Button', key: 'collapse' })
+  expect(button.props.hotkey).toBe('c')
+  expect(button.props.label).toBe('Collapse')
+  await ui.press({ key: 'collapse' })
+  expect(await ui.find({ key: 'done:ag-1' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'FINISHED · 1' })).toBeDefined()
+  expect((await ui.find({ type: 'Button', key: 'collapse' })).props.hotkey).toBe('e')
+  expect(s.stored.collapsed).toBe(true)
+})
+
+test('a collapsed choice is read at start', async ($, on) => {
+  const s = stubs(on, { store: { collapsed: true } })
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  await spawn($, 'Scan the repo')
+  await complete($, 'ag-1')
+  await s.clock.advance(3_000)
+  const ui: any = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ key: 'done:ag-1' })).toBeUndefined()
+  expect((await ui.find({ type: 'Button', key: 'collapse' })).props.label).toBe('Expand')
+})
+
+test('reconcile picks up failures', async ($, on) => {
+  const s = stubs(on, { list: [{ id: 'ag-1', status: 'failed', description: 'x', type: 'Explore' }] })
+  await spawn($, 'Scan the repo')
+  await spawn($, 'Run the workflow step', 'general-purpose')
+  const ui: any = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await s.clock.advance(2_000)
+  expect(await textOf(ui, { key: 'agent:ag-1' })).toContain('✗')
+  // ag-2 is not listed (as a workflow agent never is): still running.
+  expect(await textOf(ui, { key: 'agent:ag-2' })).not.toContain('✗')
+  expect(await ui.find({ text: /◆ crew · 1 running · 1 failed/ })).toBeDefined()
+})
+
+test('real cost wins in the Cost card', async ($, on) => {
+  stubs(on, { cost: 1.5 })
+  const ui: any = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await textOf(ui, { key: 'card:cost' })).toBe('Cost$1.50')
+})
+
+test('without a real cost the card shows the estimate', async ($, on) => {
+  const s = stubs(on)
+  await spawn($, 'Scan the repo')
+  await step($, s, 'ag-1', { input_tokens: 1_000_000, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, model: 'claude-haiku-4-5' })
+  const ui: any = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await textOf(ui, { key: 'card:cost' })).toBe('Cost≈$1.00')
+  expect(await textOf(ui, { key: 'card:tokens' })).toBe('Tokens1.0M')
+})
+
+test('the Time card ticks while the pane is shown', async ($, on) => {
+  const s = stubs(on)
+  await $.command.run({ command: 'crew', args: '' })
+  const ui: any = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await textOf(ui, { key: 'card:time' })).toBe('Time0:00')
+  await s.clock.advance(5_000)
+  expect(await textOf(ui, { key: 'card:time' })).toBe('Time0:05')
+})
+
+test('a narrow pane draws the cards as one line', async ($, on) => {
+  stubs(on, { cost: 0.41 })
+  const ui: any = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 34 }, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: 'Cost $0.41 · Tokens 0 · Time 0:00' })).toBeDefined()
+  expect(await ui.find({ key: 'card:cost' })).toBeUndefined()
+})
+
+test('draws thirty running agents', async ($, on) => {
+  const s = stubs(on)
+  for (let i = 0; i < 30; i++) await spawn($, 'Agent number ' + i, i % 3 === 0 ? 'Plan' : 'Explore')
+  for (let i = 0; i < 200; i++) await spawn($, 'Done ' + i)
+  for (let i = 31; i <= 230; i++) await complete($, 'ag-' + i)
+  await s.clock.advance(3_000)
+  for (const surface of SURFACES) {
+    const ui: any = await $.ui.mount({ ...PANE, surface })
+    expect(await keyed(ui, 'agent:')).toHaveLength(30)
+    expect(await ui.find({ type: 'Text', text: 'RUNNING · 30' })).toBeDefined()
+    // A drawn tree is bounded at 100,000 characters; stay well inside it.
+    expect(JSON.stringify(await ui.drawn()).length).toBeLessThan(80_000)
+    // Mascot art has a budget: every Raster fits it, while SVGs past it fall back to dots.
+    if (surface === 'terminal') expect(await ui.findAll({ type: 'Raster' })).toHaveLength(30)
+    else expect((await ui.findAll({ type: 'Svg' })).length).toBeGreaterThanOrEqual(8)
+    await ui.unmount()
+  }
+})
+
+test('caps running cards', async ($, on) => {
+  stubs(on)
+  for (let i = 0; i < 35; i++) await spawn($, 'Agent ' + i)
+  for (const surface of SURFACES) {
+    const ui: any = await $.ui.mount({ ...PANE, surface })
+    expect(await keyed(ui, 'agent:')).toHaveLength(30)
+    expect(await ui.find({ type: 'Text', text: 'RUNNING · 35' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '… 5 more running' })).toBeDefined()
+    expect(JSON.stringify(await ui.drawn()).length).toBeLessThan(80_000)
+    await ui.unmount()
+  }
+})
+
+test('caps finished rows', async ($, on) => {
+  const s = stubs(on)
+  for (let i = 0; i < 60; i++) await spawn($, 'Agent ' + i)
+  for (let i = 1; i <= 60; i++) await complete($, 'ag-' + i)
+  await s.clock.advance(3_000)
+  const ui: any = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await keyed(ui, 'done:')).toHaveLength(50)
+  expect(await ui.find({ type: 'Text', text: '… 10 more' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'FINISHED · 60' })).toBeDefined()
+})
+
+test('mascot off draws a dot', { options: { mascot: 'off' } }, async ($, on) => {
+  stubs(on)
+  await spawn($, 'Scan the repo')
+  for (const surface of SURFACES) {
+    const ui: any = await $.ui.mount({ ...PANE, surface })
+    expect(await ui.find({ type: 'Raster' })).toBeUndefined()
+    expect(await ui.find({ type: 'Svg' })).toBeUndefined()
+    // The mascot's place holds a dot in its coat's color.
+    expect((await ui.findAll({ type: 'Text', text: '●' })).some((x: any) => x.props.color === '#35B5AC')).toBe(true)
+    await ui.unmount()
+  }
+})
+
+test('observers pass results through untouched', async ($, on) => {
+  const s = stubs(on)
+  const spawned: any = await spawn($, 'Scan the repo')
+  expect(spawned).toEqual({ model: 'claude-haiku-4-5', agentId: 'ag-1' })
+  expect(await ($.tool.call as any)({ tool: 'Bash', command: 'ls', agentId: 'ag-1' })).toEqual({ result: 'ok' })
+  expect(await step($, s, 'ag-1', USAGE)).toEqual({ turnId: 't1', index: 0, answer: '', toolUses: [], stopReason: 'end_turn', usage: USAGE })
+  expect(await complete($, 'ag-1')).toEqual({ text: '' })
+  expect(await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })).toEqual({ cwd: '/w' })
+})
