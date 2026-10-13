@@ -216,7 +216,7 @@ claude --plugin-dir .                # try it in a session; edits hot-reload
 `hooks/register.ts` is the only file that touches the mods API. The rest is pure and
 tested on its own: `sprites.ts` (the mascots and their encoders), `pricing.ts` (prices,
 model names, number formats), `roster.ts` (the agents' lifecycle) and `view.ts` (the text
-of every line). Design notes live in [`docs/superpowers/plans`](docs/superpowers/plans).
+of every line).
 
 ## Credits
 
