@@ -97,7 +97,7 @@ test('cells encode 55 cells of 12 bytes', () => {
 test('first cell of working general is the antenna tip', () => {
   const cells = encodeCells(frameAt('general', 'working', 0), paletteFor('general-purpose', 'working'))
   // The top-middle cell: row 0, column 5. Its top pixel is the lit tip, its bottom the stalk.
-  expect(cellWords(cells, 5)).toEqual([0x2580, 0xffe38a, 0x6e3423])
+  expect(cellWords(cells, 5)).toEqual([0x2580, 0xe0a100, 0xa0522d])
   // The top-left cell is clear: a space on the terminal's default colors.
   expect(cellWords(cells, 0)).toEqual([0x20, 0x01000000, 0x01000000])
 })
@@ -117,7 +117,51 @@ test('repeated frames are drawn once', () => {
   expect(idle.match(/<g /g)).toHaveLength(2)
   expect(idle).toContain('values="1;1;1;1;1;0;1;1"')
   expect(spriteSvg('explore', 'done', paletteFor('Explore', 'done')).match(/<g /g)).toHaveLength(2)
-  expect(spriteSvg('custom', 'failed', paletteFor('x', 'failed')).match(/<g /g)).toHaveLength(2)
+  // failed: the tear on three rows, then none.
+  expect(spriteSvg('custom', 'failed', paletteFor('x', 'failed')).match(/<g /g)).toHaveLength(4)
+})
+
+test('the smile mirrors the frown', () => {
+  // Mouth pixels of the face looking ahead: a V when done, the same turned over when failed.
+  const mouth = (f: readonly string[]) => f.flatMap((row, y) => [...row].flatMap((c, x) => (c === 'm' ? [[x, y]] : [])))
+  expect(mouth(frameAt('general', 'done', 2))).toEqual([[4, 7], [6, 7], [5, 8]])
+  expect(mouth(frameAt('general', 'failed', 0))).toEqual([[5, 7], [4, 8], [6, 8]])
+})
+
+test('the tear rolls down', () => {
+  const tearRow = (f: readonly string[]) => f.findIndex((row) => row.includes('t'))
+  expect(framesFor('explore', 'failed').map(tearRow)).toEqual([5, 5, 6, 6, 7, 7, -1, -1])
+})
+
+// WCAG contrast of two #RRGGBB colors.
+function contrast(a: string, b: string): number {
+  const lum = (hex: string) => {
+    const n = parseInt(hex.slice(1), 16)
+    const [r, g, bl] = [n >> 16, (n >> 8) & 255, n & 255].map((v) => {
+      const c = v / 255
+      return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+    })
+    return 0.2126 * r! + 0.7152 * g! + 0.0722 * bl!
+  }
+  const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x)
+  return (hi! + 0.05) / (lo! + 0.05)
+}
+
+test('head pieces, feet, tips and sparkles show on dark and light themes', () => {
+  // These stand on the terminal's own background, which a Raster cannot follow.
+  const types = ['general-purpose', 'Explore', 'Plan', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
+  // The custom names among them wear all four coats.
+  expect(new Set(types.slice(3).map((t) => paletteFor(t, 'idle').b)).size).toBe(4)
+  for (const type of types) {
+    for (const pose of POSES) {
+      const palette = paletteFor(type, pose)
+      for (const key of ['s', 'f', 'a', 'A', 'k', 't']) {
+        for (const bg of ['#1E1E1E', '#FFFFFF']) {
+          expect(contrast(palette[key]!, bg), `${type} ${pose} ${key} on ${bg}`).toBeGreaterThanOrEqual(2.2)
+        }
+      }
+    }
+  }
 })
 
 test('svgs stay small enough for a pane of thirty', () => {

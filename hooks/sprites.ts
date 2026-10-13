@@ -27,11 +27,12 @@ type FrameSpec = {
   mouth?: 'dot' | 'smile' | 'flat' | 'none'
   spark?: ReadonlyArray<readonly [number, number]>
   droop?: boolean
-  tear?: boolean
+  /** The row the tear has rolled to, if one shows. */
+  tear?: 5 | 6 | 7
 }
 
 function draw(head: Head, spec: FrameSpec): Frame {
-  const { look = 0, eyes = 'open', hands = 'rest', feet = 'in', tip = 'on', mouth = 'dot', spark = [], droop = false, tear = false } = spec
+  const { look = 0, eyes = 'open', hands = 'rest', feet = 'in', tip = 'on', mouth = 'dot', spark = [], droop = false, tear } = spec
   const g: string[][] = Array.from({ length: SPRITE_H }, () => Array<string>(SPRITE_W).fill('.'))
   const set = (x: number, y: number, c: string) => {
     if (x >= 0 && x < SPRITE_W && y >= 0 && y < SPRITE_H) g[y]![x] = c
@@ -62,7 +63,8 @@ function draw(head: Head, spec: FrameSpec): Frame {
   set(2 + look, 7, 'c'); set(8 + look, 7, 'c')
   const mx = 5 + look
   if (mouth === 'dot') set(mx, 7, 'm')
-  if (mouth === 'smile') { set(mx - 1, 7, 'm'); set(mx, 7, 'm'); set(mx + 1, 7, 'm') }
+  // A smile is a small V; the frown the same shape turned over.
+  if (mouth === 'smile') { set(mx - 1, 7, 'm'); set(mx, 8, 'm'); set(mx + 1, 7, 'm') }
   if (mouth === 'flat') { set(mx - 1, 8, 'm'); set(mx, 7, 'm'); set(mx + 1, 8, 'm') }
   if (hands === 'rest') { set(0, 7, 'x'); set(10, 7, 'x') }
   if (hands === 'tapL') { set(0, 6, 'x'); set(10, 7, 'x') }
@@ -72,7 +74,7 @@ function draw(head: Head, spec: FrameSpec): Frame {
   if (feet === 'L') { set(2, 9, 'f'); set(7, 9, 'f') }
   if (feet === 'R') { set(3, 9, 'f'); set(8, 9, 'f') }
   for (const [x, y] of spark) if (g[y]?.[x] === '.') g[y]![x] = 'k'
-  if (tear) set(9, 5, 't')
+  if (tear !== undefined) set(9, tear, 't')
   return g.map((row) => row.join(''))
 }
 
@@ -83,8 +85,8 @@ function posesOf(head: Head): Record<Pose, Frame[]> {
   const rest = f()
   const done1 = f({ hands: 'up', mouth: 'smile', feet: 'none', spark: [[0, 0], [10, 1], [1, 2]] })
   const done2 = f({ hands: 'rest', mouth: 'smile', spark: [[1, 0], [9, 0], [10, 3]] })
-  const sad1 = f({ eyes: 'tired', mouth: 'flat', droop: true, tip: 'off', tear: true })
-  const sad2 = f({ eyes: 'tired', mouth: 'flat', droop: true, tip: 'off' })
+  const sad = (tear?: 5 | 6 | 7) => f({ eyes: 'tired', mouth: 'flat', droop: true, tip: 'off', tear })
+  const [sad5, sad6, sad7, dry] = [sad(5), sad(6), sad(7), sad()]
   return {
     // 2 s loop with one blink
     idle: [rest, rest, rest, rest, rest, f({ eyes: 'blink' }), rest, rest],
@@ -95,10 +97,10 @@ function posesOf(head: Head): Record<Pose, Frame[]> {
       f({ look: 1, hands: 'tapL', feet: 'L', tip: 'on' }),
       f({ look: 1, hands: 'tapR', feet: 'R', tip: 'off', mouth: 'none' }),
     ],
-    // hops with its hands up, sparkles twinkle
+    // throws its hands up and cheers, sparkles twinkle
     done: [done1, done1, done2, done2],
-    // grey, drooping, a slow tear
-    failed: [sad1, sad1, sad1, sad1, sad2, sad2, sad2, sad2],
+    // grey and drooping; a tear rolls down, then another
+    failed: [sad5, sad5, sad6, sad6, sad7, sad7, dry, dry],
   }
 }
 
@@ -123,23 +125,26 @@ export function kindOf(agentType: string | undefined): Kind {
   return 'custom'
 }
 
-const SHARED: Palette = { e: '#1E1B2E', w: '#FFFFFF', m: '#1E1B2E', k: '#FFF2B3', t: '#7FC8F8', c: '#F58FA0' }
+// The pieces that stand on the terminal's own background (stalks, caps, tips, feet, sparkles,
+// the tear) keep to middle tones, so they show on dark and light themes alike: a Raster takes
+// fixed colors and cannot follow the theme.
+const SHARED: Palette = { e: '#1E1B2E', w: '#FFFFFF', m: '#1E1B2E', k: '#E0A100', t: '#4FA3D9', c: '#F58FA0' }
 
 const BODIES: Record<Exclude<Kind, 'custom'>, Palette> = {
-  general: { b: '#D97757', h: '#F2A98C', d: '#B05A3E', s: '#6E3423', a: '#FFE38A', A: '#9C6B3A', f: '#6E3423', x: '#D97757' },
-  explore: { b: '#35B5AC', h: '#8FE6DE', d: '#23847D', s: '#17524E', a: '#FFF3A3', A: '#5E8F75', f: '#17524E', x: '#35B5AC' },
-  plan: { b: '#9B7BEA', h: '#CDBBF8', d: '#7155C0', s: '#2E2552', a: '#FFD45C', A: '#8D7A3D', f: '#2E2552', x: '#9B7BEA' },
+  general: { b: '#D97757', h: '#F2A98C', d: '#B05A3E', s: '#A0522D', a: '#E0A100', A: '#9C6B3A', f: '#A0522D', x: '#D97757' },
+  explore: { b: '#35B5AC', h: '#8FE6DE', d: '#23847D', s: '#1F8A80', a: '#E0A100', A: '#5E8F75', f: '#1F8A80', x: '#35B5AC' },
+  plan: { b: '#9B7BEA', h: '#CDBBF8', d: '#7155C0', s: '#6B4FD8', a: '#E0A100', A: '#8D7A3D', f: '#6B4FD8', x: '#9B7BEA' },
 }
 
 // Custom agent types share the sprout and take one of these coats by name.
 const CUSTOM_COATS: readonly Palette[] = [
-  { b: '#E9B248', h: '#F8D993', d: '#BA862C', s: '#4E7A2A', a: '#7CCB4E', A: '#4E7A2A', f: '#7A561A', x: '#E9B248' },
-  { b: '#E77FA8', h: '#F6B6CF', d: '#B9577F', s: '#4E7A2A', a: '#7CCB4E', A: '#4E7A2A', f: '#7D3553', x: '#E77FA8' },
-  { b: '#5B9BEA', h: '#A6C9F6', d: '#3D73B8', s: '#4E7A2A', a: '#7CCB4E', A: '#4E7A2A', f: '#264B7A', x: '#5B9BEA' },
-  { b: '#7DC57A', h: '#B9E5B6', d: '#559A52', s: '#3E6B2A', a: '#F7E07A', A: '#8D8A4A', f: '#33602F', x: '#7DC57A' },
+  { b: '#E9B248', h: '#F8D993', d: '#BA862C', s: '#4E7A2A', a: '#66B83A', A: '#4E7A2A', f: '#7A561A', x: '#E9B248' },
+  { b: '#E77FA8', h: '#F6B6CF', d: '#B9577F', s: '#4E7A2A', a: '#66B83A', A: '#4E7A2A', f: '#A0507A', x: '#E77FA8' },
+  { b: '#5B9BEA', h: '#A6C9F6', d: '#3D73B8', s: '#4E7A2A', a: '#66B83A', A: '#4E7A2A', f: '#2F6DB0', x: '#5B9BEA' },
+  { b: '#7DC57A', h: '#B9E5B6', d: '#559A52', s: '#3E6B2A', a: '#E0A100', A: '#8D8A4A', f: '#3F7A3A', x: '#7DC57A' },
 ]
 
-const GREY: Palette = { b: '#8E8C96', h: '#B9B7C0', d: '#66646E', s: '#45434C', a: '#6B6973', A: '#6B6973', f: '#45434C', x: '#8E8C96', c: '#8E8C96' }
+const GREY: Palette = { b: '#8E8C96', h: '#B9B7C0', d: '#66646E', s: '#76747E', a: '#6B6973', A: '#6B6973', f: '#76747E', x: '#8E8C96', c: '#8E8C96' }
 
 function hash(s: string): number {
   let h = 2166136261
