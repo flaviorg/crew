@@ -27,11 +27,12 @@ type Stubs = {
   stored: Record<string, unknown>
   usage: any
   answer: any
+  broken: boolean
 }
 
 // Everything the mod may call on $, answered in memory, plus the engine beneath its hooks.
 function stubs(on: any, o: { placed?: boolean; list?: any[]; cost?: number; store?: Record<string, unknown> } = {}): Stubs {
-  const s: Stubs = { clock: null, opens: [], closes: [], toasts: [], stored: { ...(o.store ?? {}) }, usage: USAGE, answer: null }
+  const s: Stubs = { clock: null, opens: [], closes: [], toasts: [], stored: { ...(o.store ?? {}) }, usage: USAGE, answer: null, broken: false }
   const open = new Set<string>()
   let n = 0
   on('session.usage', () => ({ value: { startedAt: 0, context: { window: 200_000 }, rateLimits: [], ...(o.cost === undefined ? {} : { cost: { usd: o.cost } }) } }))
@@ -54,6 +55,13 @@ function stubs(on: any, o: { placed?: boolean; list?: any[]; cost?: number; stor
   on('agent.spawn', () => s.answer ?? { model: 'claude-haiku-4-5', agentId: 'ag-' + ++n })
   on('tool.call', () => ({ result: 'ok' }))
   on('turn.step', async function* ($: any, e: any) {
+    if (s.broken) {
+      // A response that breaks off partway: an overload, a dropped connection.
+      yield { kind: 'text', index: 0, text: 'he' }
+      yield { kind: 'tool', index: 1, id: 'tu1', name: 'Bash' }
+      yield { kind: 'input', index: 1, json: '{"command":"ls"}' }
+      throw new Error('stream broke')
+    }
     yield { kind: 'stop', stopReason: 'end_turn', usage: s.usage }
     return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn', usage: s.usage }
   })
@@ -155,6 +163,33 @@ test('steps fill tokens and the context bar', async ($, on) => {
   expect(await ui.find({ type: 'Text', text: /^42\.6k tok · / })).toBeDefined()
   // The bar is 47 columns at this width; 21% of it is filled.
   expect(await textOf(ui, { type: 'Text', text: /^━+$/ })).toBe('━'.repeat(Math.round(0.21 * (70 - 11 - 12))))
+})
+
+// The chunks a step's stream delivers, in order, and how it ended.
+async function chunks($: any, agentId?: string) {
+  const seen: string[] = []
+  const stream = $.turn.step({ turnId: 't1', index: 0, model: 'claude-haiku-4-5', messageCount: 1, ...(agentId ? { agentId } : {}) })
+  try {
+    for (let r = await stream.next(); r.done !== true; r = await stream.next()) seen.push(r.value.kind + ':' + (r.value.text ?? r.value.name ?? r.value.json ?? ''))
+    seen.push('returned')
+  } catch {
+    seen.push('threw')
+  }
+  return seen
+}
+
+test('a stream that breaks off passes each chunk once', async ($, on) => {
+  const s = stubs(on)
+  await spawn($, 'Scan the repo')
+  s.broken = true
+  const once = ['text:he', 'tool:Bash', 'input:{"command":"ls"}', 'threw']
+  expect(await chunks($, 'ag-1')).toEqual(once)
+  expect(await chunks($)).toEqual(once)
+  // The broken step adds nothing; the next whole one counts as usual.
+  s.broken = false
+  await step($, s, 'ag-1', USAGE)
+  const ui: any = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /step 1$/ })).toBeDefined()
 })
 
 test('main-loop steps count toward the Tokens card only', async ($, on) => {

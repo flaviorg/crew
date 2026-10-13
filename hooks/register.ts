@@ -417,13 +417,18 @@ export function register(on: any, options: any) {
   }).catch(($: any, e: any, next: any) => next(e))
 
   // Tokens come from the steps alone; turn.complete repeats their sum, so it adds none.
+  // No .catch here: a stream that breaks off fails this hook after its chunks went out,
+  // and a catch's next(e) would replay them. Without one the engine passes the rest on;
+  // the counting after the stream is wrapped so the hook never fails on its own.
   on('turn.step', async function* ($: any, e: any, next: any) {
     const r = yield* next(e)
-    const at = await $.clock.now()
-    await update($, rosterAtom, (x) => stepped(x, e.agentId, r?.usage, e.effort, at))
+    try {
+      const at = await $.clock.now()
+      await update($, rosterAtom, (x) => stepped(x, e.agentId, r?.usage, e.effort, at))
+    } catch {
+      // A step left uncounted; the response itself is untouched.
+    }
     return r
-  }).catch(async function* ($: any, e: any, next: any) {
-    return yield* next(e)
   })
 
   on('turn.complete', async ($: any, e: any, next: any) => {
