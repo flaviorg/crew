@@ -16,7 +16,7 @@ import {
 } from './sprites.ts'
 import {
   ACCENT, bandFacts, bar, cards, cardsLine, ctxLabel, DOTS, EMPTY_TEXT, FINISHED_CAP, finishedLine, foldLabel, glyphOf,
-  headerFacts, metaLine, oneLine, QUIET_TEXT, statsLine, truncate,
+  headerFacts, metaLine, oneLine, QUIET_TEXT, runningTitle, statsLine, truncate, widthOf, type Card,
 } from './view.ts'
 
 const PANE = 'crew'
@@ -243,12 +243,14 @@ function header($: any, e: any, r: Roster, width: number) {
 
 // Three round cards of one width each (the last takes the odd cells), or one dim line when
 // three would not fit. Fixed widths keep the borders still while the values change length.
-function statCards($: any, e: any, list: { label: string; value: string }[], width: number) {
+// A card too narrow for its title (`Session cost`) shows its label (`Cost`).
+function statCards($: any, e: any, list: Card[], width: number) {
   const { Box, Text } = $.ui.resolve(e)
   if (width < 36) return Text({ dimColor: true, children: [cardsLine(list, width)] })
   const each = Math.floor((width - 2) / 3)
-  const card = (c: { label: string; value: string }, i: number) => {
+  const card = (c: Card, i: number) => {
     const w = i === list.length - 1 ? width - 2 - each * (list.length - 1) : each
+    const title = widthOf(c.title) <= w - 4 ? c.title : c.label
     return Box({
       key: 'card:' + c.label.toLowerCase(),
       borderStyle: 'round',
@@ -257,7 +259,7 @@ function statCards($: any, e: any, list: { label: string; value: string }[], wid
       paddingX: 1,
       width: w,
       children: [
-        Text({ dimColor: true, children: [truncate(c.label, w - 4)] }),
+        Text({ dimColor: true, children: [truncate(title, w - 4)] }),
         Text({ bold: true, ...(c.label === 'Cost' ? { color: ACCENT } : {}), children: [truncate(c.value, w - 4)] }),
       ],
     })
@@ -321,8 +323,8 @@ function runningSection($: any, e: any, agents: AgentRow[], view: View) {
   const more = agents.length > RUNNING_CAP ? [Text({ dimColor: true, children: [`… ${agents.length - RUNNING_CAP} more running`] })] : []
   const running = agents.filter((a) => a.status === 'running').length
   return [
-    // Counted as the header counts: an agent celebrating its end has its card, not the count.
-    Box({ marginTop: 1, children: [Text({ dimColor: true, bold: true, children: [`RUNNING · ${running}`] })] }),
+    // Every card is counted: the running ones, and apart, those celebrating their end.
+    Box({ marginTop: 1, children: [Text({ dimColor: true, bold: true, children: [runningTitle(running, agents.length - running, view.width)] })] }),
     ...agents.slice(0, RUNNING_CAP).map((a, i) => agentCard($, e, a, view, i === 0)),
     ...more,
   ]
@@ -409,10 +411,10 @@ async function drawPane($: any, e: any) {
   const now = await $.clock.now()
   const usage = await sessionUsage($)
   const mainModel = await sessionModel($)
-  // A dock draws the body flush against its left border: crew keeps a cell clear of it, as
-  // an inline frame already does, and lays out to what is left.
+  // A dock draws the body flush against its borders: crew keeps a cell clear on each side,
+  // as an inline frame already does, and lays out to what is left.
   const docked = e.props?.placement === 'dock'
-  const width = Math.max(1, (e.props?.bodyColumns ?? 60) - (docked ? 1 : 0))
+  const width = Math.max(1, (e.props?.bodyColumns ?? 60) - (docked ? 2 : 0))
   const view: View = { width, now, mainModel, window: usage?.context?.window ?? 200_000, art: { left: ART_BUDGET } }
   const sum = totals(r, overrides, mainModel)
   const startedAt = typeof usage?.startedAt === 'number' ? usage.startedAt : now
@@ -430,7 +432,7 @@ async function drawPane($: any, e: any) {
       ...(done.length > 0 ? finishedSection($, e, done, width) : []),
     ],
   })
-  return docked ? Box({ flexDirection: 'column', paddingLeft: 1, children: [root] }) : root
+  return docked ? Box({ flexDirection: 'column', paddingLeft: 1, paddingRight: 1, children: [root] }) : root
 }
 
 // ── the band ───────────────────────────────────────────────────────────────────────────

@@ -209,6 +209,29 @@ export function anyLive(r: Roster, now: number): boolean {
   return r.agents.some((a) => a.status === 'running' || now - endOf(a) < CELEBRATE_MS)
 }
 
+/**
+ * The run the live agents belong to: every agent since the band last appeared. An agent is
+ * live from its spawn to CELEBRATE_MS after its end; the run is the unbroken stretch of
+ * live time that reaches now, so one already filed under Finished still counts while the
+ * others run. Empty when nothing is live.
+ */
+export function run(r: Roster, now: number): AgentRow[] {
+  const shown = live(r, now)
+  if (shown.length === 0) return []
+  let start = Math.min(...shown.map((a) => a.startedAt))
+  const ids = new Set(shown.map((a) => a.id))
+  // Newest end first: each one still live when the run began joins it, and may move its
+  // start earlier. The first that is not ends the search: every one after it ended sooner.
+  const rest = r.agents.filter((a) => !ids.has(a.id)).sort((a, b) => endOf(b) - endOf(a))
+  const joined: AgentRow[] = []
+  for (const a of rest) {
+    if (endOf(a) + CELEBRATE_MS <= start) break
+    joined.push(a)
+    start = Math.min(start, a.startedAt)
+  }
+  return [...joined, ...shown].sort((a, b) => a.startedAt - b.startedAt)
+}
+
 export function poseOf(a: AgentRow): Pose {
   if (a.status === 'running') return 'working'
   if (a.status === 'done') return 'done'

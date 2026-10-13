@@ -2,7 +2,7 @@
 // strings into elements.
 
 import { formatClock, formatTokens, formatUsd, shortModel, totalTokens, type Price } from './pricing.ts'
-import { counts, estimate, live, type AgentRow, type AgentStatus, type Roster } from './roster.ts'
+import { counts, estimate, run, type AgentRow, type AgentStatus, type Roster } from './roster.ts'
 
 /** crew's one accent, used only for what is live. */
 export const ACCENT = '#9B7BEA'
@@ -170,13 +170,31 @@ export function finishedLine(a: AgentRow, usd: number | null, width: number): { 
   return { title: truncate(desc, Math.max(0, width - 3 - widthOf(right))), right }
 }
 
-/** The three stat cards. Claude Code's real session cost wins; else crew's estimate, marked ≈. */
-export function cards(input: { realUsd: number | null; estUsd: number | null; tokens: number; sessionMs: number }): { label: string; value: string }[] {
+/**
+ * The title over the agent cards, counting every card under it: `RUNNING · 1 · JUST
+ * FINISHED · 2` while some celebrate their end, `JUST FINISHED · 1` when none runs. Short
+ * of room, the celebrating count goes first.
+ */
+export function runningTitle(running: number, ended: number, width = Infinity): string {
+  const parts: Part[] = []
+  if (running > 0 || ended === 0) parts.push({ text: `RUNNING · ${running}` })
+  if (ended > 0) parts.push({ text: `JUST FINISHED · ${ended}`, drop: running > 0 ? 1 : undefined })
+  return fit(parts, width)
+}
+
+/** A stat card: `label` names it; `title` is what it shows when the card has room for it. */
+export type Card = { label: string; title: string; value: string }
+
+/**
+ * The three stat cards, totals of the whole session: the main loop with its subagents.
+ * Claude Code's real session cost wins; else crew's estimate, marked ≈.
+ */
+export function cards(input: { realUsd: number | null; estUsd: number | null; tokens: number; sessionMs: number }): Card[] {
   const costValue = input.realUsd !== null ? formatUsd(input.realUsd, false) : input.estUsd !== null ? formatUsd(input.estUsd, true) : '—'
   return [
-    { label: 'Cost', value: costValue },
-    { label: 'Tokens', value: formatTokens(input.tokens) },
-    { label: 'Time', value: formatClock(input.sessionMs) },
+    { label: 'Cost', title: 'Session cost', value: costValue },
+    { label: 'Tokens', title: 'Session tokens', value: formatTokens(input.tokens) },
+    { label: 'Time', title: 'Session time', value: formatClock(input.sessionMs) },
   ]
 }
 
@@ -191,11 +209,13 @@ export function cardsLine(list: { label: string; value: string }[], width = Infi
 }
 
 /**
- * The band: `2 running · 0:42 · ≈$0.18`, over the agents still in Running. Short of room,
- * the counts of agents that just ended go first (while any still runs), then the clock.
+ * The band: `2 running · 1 done · 0:42 · ≈$0.18`, over every agent of the run (since the
+ * band appeared), the ones already filed under Finished too. The clock runs from the run's
+ * first spawn and stops at its last end once nothing runs. Short of room, the counts of
+ * agents that ended go first (while any still runs), then the clock.
  */
 export function bandFacts(r: Roster, now: number, overrides: Record<string, Price>, width = Infinity): string {
-  const agents = live(r, now)
+  const agents = run(r, now)
   const c = counts({ ...r, agents })
   const ended = c.running > 0 ? 1 : undefined
   const parts: Part[] = []
@@ -204,7 +224,11 @@ export function bandFacts(r: Roster, now: number, overrides: Record<string, Pric
   if (c.failed > 0) parts.push({ text: `${c.failed} failed`, drop: ended })
   if (c.stopped > 0) parts.push({ text: `${c.stopped} stopped`, drop: ended })
   if (parts.length === 0) parts.push({ text: 'idle' })
-  if (agents.length > 0) parts.push({ text: formatClock(now - Math.min(...agents.map((a) => a.startedAt))), drop: 2 })
+  if (agents.length > 0) {
+    const start = Math.min(...agents.map((a) => a.startedAt))
+    const end = c.running > 0 ? now : Math.max(...agents.map((a) => a.endedAt ?? now))
+    parts.push({ text: formatClock(end - start), drop: 2 })
+  }
   let usd: number | null = null
   for (const a of agents) {
     const e = estimate(a, overrides)

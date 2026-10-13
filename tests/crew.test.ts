@@ -187,7 +187,7 @@ test('the empty pane says what will happen', async ($, on) => {
     const ui: any = await $.ui.mount({ ...PANE, surface })
     expect(await ui.find({ type: 'Text', text: 'No subagents yet — they appear here when Claude delegates work.' })).toBeDefined()
     expect(await ui.find({ text: /◆ crew · idle/ })).toBeDefined()
-    expect(await textOf(ui, { key: 'card:tokens' })).toBe('Tokens0')
+    expect(await textOf(ui, { key: 'card:tokens' })).toBe('Session tokens0')
     expect(await ui.find({ type: surface === 'terminal' ? 'Raster' : 'Svg' })).toBeDefined()
     await ui.unmount()
   }
@@ -296,7 +296,7 @@ test('main-loop steps count toward the Tokens card only', async ($, on) => {
   const s = stubs(on)
   await step($, s, undefined, USAGE)
   const ui: any = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect(await textOf(ui, { key: 'card:tokens' })).toBe('Tokens135')
+  expect(await textOf(ui, { key: 'card:tokens' })).toBe('Session tokens135')
   expect(await ui.find({ type: 'Text', text: /No subagents yet/ })).toBeDefined()
 })
 
@@ -331,12 +331,12 @@ test('a finished agent celebrates, then files away', async ($, on) => {
   await complete($, 'ag-1')
   await s.clock.advance(250)
   expect(await ui.find({ type: 'Text', text: '✓' })).toBeDefined()
-  // The card stays to celebrate; the count, like the header's, is of agents still running.
+  // The card stays to celebrate, counted apart from the running ones.
   expect(await ui.find({ key: 'agent:ag-1' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: 'RUNNING · 0' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'JUST FINISHED · 1' })).toBeDefined()
   expect(await ui.find({ text: /◆ crew · 1 done/ })).toBeDefined()
   await s.clock.advance(2_750)
-  expect(await ui.find({ type: 'Text', text: /^RUNNING/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^RUNNING|^JUST FINISHED/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'FINISHED · 1' })).toBeDefined()
   expect(await textOf(ui, { key: 'done:ag-1' })).toMatch(/^✓ Scan the repo.*haiku 4\.5 · 0 · ≈\$0\.00 · 0:00$/)
   expect(await ui.find({ text: /◆ crew · 1 done/ })).toBeDefined()
@@ -656,7 +656,7 @@ test('a teammate the agent list calls idle files away', async ($, on) => {
 test('real cost wins in the Cost card', async ($, on) => {
   stubs(on, { cost: 1.5 })
   const ui: any = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect(await textOf(ui, { key: 'card:cost' })).toBe('Cost$1.50')
+  expect(await textOf(ui, { key: 'card:cost' })).toBe('Session cost$1.50')
 })
 
 test('without a real cost the card shows the estimate', async ($, on) => {
@@ -664,17 +664,17 @@ test('without a real cost the card shows the estimate', async ($, on) => {
   await spawn($, 'Scan the repo')
   await step($, s, 'ag-1', { input_tokens: 1_000_000, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, model: 'claude-haiku-4-5' })
   const ui: any = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  expect(await textOf(ui, { key: 'card:cost' })).toBe('Cost≈$1.00')
-  expect(await textOf(ui, { key: 'card:tokens' })).toBe('Tokens1.0M')
+  expect(await textOf(ui, { key: 'card:cost' })).toBe('Session cost≈$1.00')
+  expect(await textOf(ui, { key: 'card:tokens' })).toBe('Session tokens1.0M')
 })
 
 test('the Time card ticks while the pane is shown', async ($, on) => {
   const s = stubs(on)
   await $.command.run({ command: 'crew', args: '' })
   const ui: any = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect(await textOf(ui, { key: 'card:time' })).toBe('Time0:00')
+  expect(await textOf(ui, { key: 'card:time' })).toBe('Session time0:00')
   await s.clock.advance(5_000)
-  expect(await textOf(ui, { key: 'card:time' })).toBe('Time0:05')
+  expect(await textOf(ui, { key: 'card:time' })).toBe('Session time0:05')
 })
 
 test('every line fits a narrow pane', async ($, on) => {
@@ -714,19 +714,21 @@ test('a docked pane keeps a column clear of the dock\'s border', async ($, on) =
   const gaugeCells = async (ui: any) =>
     widthOf((await textOf(ui, { type: 'Text', text: /^━+$/ })) + (await textOf(ui, { type: 'Text', text: /^─+$/ })))
   for (const surface of SURFACES) {
-    // Docked, the engine draws the body flush against the border: crew pads one cell and
-    // lays out to the 69 the padding leaves.
+    // Docked, the engine draws the body flush against its borders: crew pads a cell on
+    // each side and lays out to the 68 the padding leaves.
     let ui: any = await $.ui.mount({ ...DOCK, surface })
     let root = await ui.drawn()
     expect(root.props.paddingLeft).toBe(1)
-    expect(await cardCells(ui)).toBe(69)
-    expect(await gaugeCells(ui)).toBe(49)
+    expect(root.props.paddingRight).toBe(1)
+    expect(await cardCells(ui)).toBe(68)
+    expect(await gaugeCells(ui)).toBe(48)
     expect(needs(root)).toBeLessThanOrEqual(70)
     await ui.unmount()
     // Inline the frame has its own space: no padding, all 70 cells.
     ui = await $.ui.mount({ ...PANE, surface })
     root = await ui.drawn()
     expect(root.props.paddingLeft).toBeUndefined()
+    expect(root.props.paddingRight).toBeUndefined()
     expect(await cardCells(ui)).toBe(70)
     expect(await gaugeCells(ui)).toBe(50)
     await ui.unmount()
@@ -743,7 +745,7 @@ test('at the dock\'s narrowest the Finished title and its button share one line'
   for (let i = 0; i < 12; i++) await spawn($, 'Agent ' + i)
   await complete($, 'ag-1')
   await s.clock.advance(3_000)
-  // The engine's narrowest dock leaves 23 cells; crew pads one.
+  // The engine's narrowest dock leaves 23 cells; crew pads one on each side.
   for (const cols of [23, 24, 26]) {
     const ui: any = await $.ui.mount({ ...DOCK, props: { ...DOCK.props, bodyColumns: cols }, surface: 'terminal' })
     expect(needs(await ui.drawn())).toBeLessThanOrEqual(cols)
@@ -757,7 +759,7 @@ test('at the dock\'s narrowest the Finished title and its button share one line'
     expect(await ui.find({ type: 'Text', text: 'FINISHED · 12' })).toBeDefined()
     const button = await ui.find({ key: 'collapse' })
     expect(button.props.label).toBe('Hide')
-    expect(widthOf('FINISHED · 12') + 1 + needs(button)).toBeLessThanOrEqual(cols - 1)
+    expect(widthOf('FINISHED · 12') + 1 + needs(button)).toBeLessThanOrEqual(cols - 2)
     await ui.unmount()
   }
 })
@@ -770,6 +772,8 @@ test('stat cards share the width evenly', async ($, on) => {
     expect(widths[0]).toBe(widths[1])
     expect(widths[2]! - widths[0]!).toBeLessThanOrEqual(2)
     expect(widths[0]! + widths[1]! + widths[2]! + 2).toBe(cols)
+    // The cards are the session's totals and say so, when they have the room.
+    expect(await textOf(ui, { key: 'card:cost' })).toStartWith(cols >= 60 ? 'Session cost' : 'Cost')
     await ui.unmount()
   }
 })

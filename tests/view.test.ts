@@ -1,8 +1,8 @@
 import { expect, test } from 'claude-code/testing'
-import { completed, EMPTY, spawned, stepped, type AgentRow } from '../hooks/roster.ts'
+import { completed, EMPTY, run, spawned, stepped, type AgentRow } from '../hooks/roster.ts'
 import {
   foldLabel, ACCENT, bandFacts, bar, cards, cardsLine, ctxLabel, DOTS, EMPTY_TEXT, FINISHED_CAP, finishedLine, finishedRight,
-  fit, glyphOf, headerFacts, metaLine, oneLine, statsLine, truncate, widthOf,
+  fit, glyphOf, headerFacts, metaLine, oneLine, runningTitle, statsLine, truncate, widthOf,
 } from '../hooks/view.ts'
 
 function row(over: Partial<AgentRow> = {}): AgentRow {
@@ -142,12 +142,12 @@ test('finished line', () => {
 
 test('cards', () => {
   expect(cards({ realUsd: 0.41, estUsd: 0.5, tokens: 206_500, sessionMs: 738_000 })).toEqual([
-    { label: 'Cost', value: '$0.41' },
-    { label: 'Tokens', value: '206.5k' },
-    { label: 'Time', value: '12:18' },
+    { label: 'Cost', title: 'Session cost', value: '$0.41' },
+    { label: 'Tokens', title: 'Session tokens', value: '206.5k' },
+    { label: 'Time', title: 'Session time', value: '12:18' },
   ])
-  expect(cards({ realUsd: null, estUsd: 0.41, tokens: 0, sessionMs: 0 })[0]).toEqual({ label: 'Cost', value: '≈$0.41' })
-  expect(cards({ realUsd: null, estUsd: null, tokens: 0, sessionMs: 0 })[0]).toEqual({ label: 'Cost', value: '—' })
+  expect(cards({ realUsd: null, estUsd: 0.41, tokens: 0, sessionMs: 0 })[0]).toEqual({ label: 'Cost', title: 'Session cost', value: '≈$0.41' })
+  expect(cards({ realUsd: null, estUsd: null, tokens: 0, sessionMs: 0 })[0]).toEqual({ label: 'Cost', title: 'Session cost', value: '—' })
   expect(cardsLine(cards({ realUsd: 0.41, estUsd: null, tokens: 206_500, sessionMs: 738_000 }))).toBe('Cost $0.41 · Tokens 206.5k · Time 12:18')
   // Narrower, the compact form keeps all three values.
   expect(cardsLine(cards({ realUsd: 0.41, estUsd: null, tokens: 206_500, sessionMs: 738_000 }), 30)).toBe('$0.41 · 206.5k tok · 12:18')
@@ -160,15 +160,47 @@ test('band facts', () => {
   expect(bandFacts(r, 42_000, {})).toBe('2 running · 0:42 · ≈$0.00')
   r = stepped(stepped(r, 'a', M, undefined, 1), 'b', M, undefined, 1)
   expect(bandFacts(r, 42_000, {})).toBe('2 running · 0:42 · ≈$0.20')
-  // A celebrating agent still counts; one filed away does not.
+  // A celebrating agent counts, and so does one filed away while the run goes on.
   r = completed(r, 'a', { at: 40_000, reason: 'answer' })
   expect(bandFacts(r, 42_000, {})).toStartWith('1 running · 1 done · 0:42')
-  expect(bandFacts(r, 43_000, {})).toStartWith('1 running · 0:33')
+  expect(bandFacts(r, 43_000, {})).toBe('1 running · 1 done · 0:43 · ≈$0.20')
+  expect(bandFacts(r, 90_000, {})).toBe('1 running · 1 done · 1:30 · ≈$0.20')
   // Short of room, the agents that just ended go first, then the clock; the cost stays.
   expect(bandFacts(r, 42_000, {})).toBe('1 running · 1 done · 0:42 · ≈$0.20')
   expect(bandFacts(r, 42_000, {}, 25)).toBe('1 running · 0:42 · ≈$0.20')
   expect(bandFacts(r, 42_000, {}, 20)).toBe('1 running · ≈$0.20')
   expect(bandFacts(spawned(EMPTY, { ...base, id: 'c', model: 'mystery', at: 0 }), 5_000, {})).toBe('1 running · 0:05')
+  // Once nothing runs, the clock stops at the last end while the last one celebrates.
+  const last = completed(r, 'b', { at: 95_000, reason: 'answer' })
+  expect(bandFacts(last, 96_000, {})).toBe('2 done · 1:35 · ≈$0.20')
+  expect(bandFacts(last, 97_900, {})).toBe('2 done · 1:35 · ≈$0.20')
+  // A run that ended before the next spawn is not added to it.
+  const next = spawned(last, { ...base, id: 'c', at: 200_000 })
+  expect(bandFacts(next, 205_000, {})).toBe('1 running · 0:05 · ≈$0.00')
+})
+
+test('the run behind the band', () => {
+  const base = { description: 'x', type: 'Explore', model: 'claude-haiku-4-5', background: false, workflow: false }
+  let r = spawned(spawned(EMPTY, { ...base, id: 'a', at: 0 }), { ...base, id: 'b', at: 10_000 })
+  r = completed(r, 'a', { at: 20_000 })
+  // Spawned while a still celebrated: the band never went away, so a stays in the run.
+  r = completed(r, 'b', { at: 21_000 })
+  r = spawned(r, { ...base, id: 'c', at: 23_500 })
+  expect(run(r, 60_000).map((a) => a.id)).toEqual(['a', 'b', 'c'])
+  // Spawned after the band went: a run of its own.
+  r = completed(r, 'c', { at: 70_000 })
+  r = spawned(r, { ...base, id: 'd', at: 73_000 })
+  expect(run(r, 80_000).map((a) => a.id)).toEqual(['d'])
+  r = completed(r, 'd', { at: 81_000 })
+  expect(run(r, 90_000)).toEqual([])
+})
+
+test('the title over the cards counts every card under it', () => {
+  expect(runningTitle(3, 0)).toBe('RUNNING · 3')
+  expect(runningTitle(1, 2)).toBe('RUNNING · 1 · JUST FINISHED · 2')
+  expect(runningTitle(0, 1)).toBe('JUST FINISHED · 1')
+  // Short of room, the celebrating count goes first.
+  expect(runningTitle(1, 2, 20)).toBe('RUNNING · 1')
 })
 
 test('glyphs', () => {
