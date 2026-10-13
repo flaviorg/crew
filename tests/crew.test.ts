@@ -320,9 +320,12 @@ test('a finished agent celebrates, then files away', async ($, on) => {
   await complete($, 'ag-1')
   await s.clock.advance(250)
   expect(await ui.find({ type: 'Text', text: '✓' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: 'RUNNING · 1' })).toBeDefined()
+  // The card stays to celebrate; the count, like the header's, is of agents still running.
+  expect(await ui.find({ key: 'agent:ag-1' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'RUNNING · 0' })).toBeDefined()
+  expect(await ui.find({ text: /◆ crew · 1 done/ })).toBeDefined()
   await s.clock.advance(2_750)
-  expect(await ui.find({ type: 'Text', text: 'RUNNING · 1' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^RUNNING/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'FINISHED · 1' })).toBeDefined()
   expect(await textOf(ui, { key: 'done:ag-1' })).toMatch(/^✓ Scan the repo.*haiku 4\.5 · 0 · ≈\$0\.00 · 0:00$/)
   expect(await ui.find({ text: /◆ crew · 1 done/ })).toBeDefined()
@@ -365,7 +368,48 @@ test('the mascot animates', async ($, on) => {
   await s.clock.advance(250)
   const after = (await ui.find({ type: 'Raster' })).props.cells
   expect(after).not.toBe(before)
-  expect(await textOf(ui, { type: 'Text', text: /^[●◉○]$/ })).not.toBe(dot)
+  // The dot pulses every other frame.
+  await s.clock.advance(250)
+  expect(await textOf(ui, { type: 'Text', text: /^[●◉]$/ })).not.toBe(dot)
+})
+
+test('agents animate out of step', async ($, on) => {
+  stubs(on)
+  for (let i = 0; i < 6; i++) await spawn($, 'Agent ' + i)
+  const ui: any = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  // Six Explore agents in the same pose, not all on the same frame.
+  const cells = (await ui.findAll({ type: 'Raster' })).map((x: any) => x.props.cells)
+  expect(cells).toHaveLength(6)
+  expect(new Set(cells).size).toBeGreaterThan(1)
+})
+
+test('the first card sits right under its title', async ($, on) => {
+  stubs(on)
+  await spawn($, 'One')
+  await spawn($, 'Two')
+  const ui: any = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await ui.find({ key: 'agent:ag-1' })).props.marginTop).toBe(0)
+  expect((await ui.find({ key: 'agent:ag-2' })).props.marginTop).toBe(1)
+})
+
+test('once every agent has finished, the idle mascot comes back', async ($, on) => {
+  const s = stubs(on)
+  await $.command.run({ command: 'crew', args: '' })
+  await spawn($, 'Scan the repo')
+  const ui: any = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ key: 'm:idle' })).toBeUndefined()
+  await complete($, 'ag-1')
+  await s.clock.advance(3_000)
+  expect(await ui.find({ type: 'Text', text: 'All quiet — new subagents appear here when Claude delegates work.' })).toBeDefined()
+  expect(await ui.find({ type: 'Raster', key: 'm:idle' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /No subagents yet/ })).toBeUndefined()
+  // It blinks while the pane is shown.
+  const seen = new Set<string>()
+  for (let i = 0; i < 8; i++) {
+    seen.add((await ui.find({ type: 'Raster', key: 'm:idle' })).props.cells)
+    await s.clock.advance(250)
+  }
+  expect(seen.size).toBe(2)
 })
 
 test('auto-opens once, toasts once when it cannot place', async ($, on) => {

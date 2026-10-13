@@ -11,10 +11,12 @@ import {
   anyLive, completed, counts, EMPTY, estimate, finished, live, poseOf, reconciled, spawned, stepped,
   toolUsed, totals, type AgentRow, type Roster,
 } from './roster.ts'
-import { encodeCells, FRAME_MS, frameAt, kindOf, paletteFor, spriteSvg, SPRITE_COLUMNS, SPRITE_ROWS, type Pose } from './sprites.ts'
 import {
-  ACCENT, bandFacts, bar, cards, cardsLine, ctxLabel, EMPTY_TEXT, FINISHED_CAP, finishedLine, glyphOf,
-  headerFacts, metaLine, oneLine, statsLine, truncate,
+  encodeCells, FRAME_MS, frameAt, kindOf, paletteFor, phaseOf, spriteSvg, SPRITE_COLUMNS, SPRITE_ROWS, type Pose,
+} from './sprites.ts'
+import {
+  ACCENT, bandFacts, bar, cards, cardsLine, ctxLabel, DOTS, EMPTY_TEXT, FINISHED_CAP, finishedLine, glyphOf,
+  headerFacts, metaLine, oneLine, QUIET_TEXT, statsLine, truncate,
 } from './view.ts'
 
 const PANE = 'crew'
@@ -127,8 +129,9 @@ async function onTick($: any) {
       paneShown = (await paneIsShown($)) === true
       if (!paneShown) return stopTicker()
     }
-    // The empty pane's idle mascot blinks: draw just the frames where it changes.
-    const blinked = r.agents.length === 0 && frameAt('general', 'idle', frame) !== frameAt('general', 'idle', frame - 1)
+    // With nothing live the pane shows its idle mascot, which blinks: draw just the frames
+    // where it changes.
+    const blinked = settings.mascot === 'on' && frameAt('general', 'idle', frame) !== frameAt('general', 'idle', frame - 1)
     if (paneShown && (frame % 4 === 0 || blinked)) $.ui.invalidate('ui.render')
   } catch {
     // A failed tick is skipped; the next one tries again.
@@ -190,12 +193,14 @@ function spend(art: { left: number }, size: number): boolean {
 // One agent's mascot for the surface drawing it: half-block pixels in the terminal, a
 // self-animating SVG where Svg exists, a dot in its coat's color otherwise (and once the
 // art budget is spent).
-function mascot($: any, e: any, id: string, type: string, pose: Pose, alt: string, art: { left: number }, roomy: boolean) {
+function mascot(
+  $: any, e: any, id: string, type: string, pose: Pose, alt: string, art: { left: number }, roomy: boolean, phase = 0,
+) {
   const palette = paletteFor(type, pose)
   if (settings.mascot === 'on' && roomy) {
     if (e.surface === 'terminal') {
       const { Raster } = $.ui.resolve(e)
-      const cells = encodeCells(frameAt(kindOf(type), pose, frame), palette)
+      const cells = encodeCells(frameAt(kindOf(type), pose, frame + phase), palette)
       if (Raster && spend(art, cells.length)) return Raster({ key: 'm:' + id, columns: SPRITE_COLUMNS, rows: SPRITE_ROWS, cells })
     } else if (e.surface === 'desktop' || e.surface === 'vscode' || e.surface === 'mobile') {
       const { Svg } = $.ui.resolve(e)
@@ -242,10 +247,12 @@ function statCards($: any, e: any, list: { label: string; value: string }[], wid
 }
 
 // Mascot on the left; description and status, meta, context bar and stats on the right.
-function agentCard($: any, e: any, a: AgentRow, view: View) {
+// The first card sits right under its section's title, as the first Finished row does.
+function agentCard($: any, e: any, a: AgentRow, view: View, first: boolean) {
   const { Box, Text } = $.ui.resolve(e)
   const pose = poseOf(a)
-  const glyph = glyphOf(a.status, frame)
+  const phase = phaseOf(a.id)
+  const glyph = glyphOf(a.status, frame + phase)
   const roomy = view.width >= ART_MIN_WIDTH
   // The text column: what the mascot (or its dot) and the margin leave.
   const width = Math.max(1, view.width - (settings.mascot === 'on' && roomy ? SPRITE_COLUMNS : 1) - 1)
@@ -258,9 +265,9 @@ function agentCard($: any, e: any, a: AgentRow, view: View) {
   return Box({
     key: 'agent:' + a.id,
     flexDirection: 'row',
-    marginTop: 1,
+    marginTop: first ? 0 : 1,
     children: [
-      mascot($, e, a.id, a.type, pose, `${truncate(a.description || a.type, 80)} — ${pose}`, view.art, roomy),
+      mascot($, e, a.id, a.type, pose, `${truncate(a.description || a.type, 80)} — ${pose}`, view.art, roomy, phase),
       Box({
         flexDirection: 'column',
         marginLeft: 1,
@@ -293,9 +300,11 @@ function agentCard($: any, e: any, a: AgentRow, view: View) {
 function runningSection($: any, e: any, agents: AgentRow[], view: View) {
   const { Box, Text } = $.ui.resolve(e)
   const more = agents.length > RUNNING_CAP ? [Text({ dimColor: true, children: [`… ${agents.length - RUNNING_CAP} more running`] })] : []
+  const running = agents.filter((a) => a.status === 'running').length
   return [
-    Box({ marginTop: 1, children: [Text({ dimColor: true, bold: true, children: [`RUNNING · ${agents.length}`] })] }),
-    ...agents.slice(0, RUNNING_CAP).map((a) => agentCard($, e, a, view)),
+    // Counted as the header counts: an agent celebrating its end has its card, not the count.
+    Box({ marginTop: 1, children: [Text({ dimColor: true, bold: true, children: [`RUNNING · ${running}`] })] }),
+    ...agents.slice(0, RUNNING_CAP).map((a, i) => agentCard($, e, a, view, i === 0)),
     ...more,
   ]
 }
@@ -339,8 +348,9 @@ function finishedSection($: any, e: any, done: AgentRow[], width: number) {
   return [head, ...rows, ...more]
 }
 
-// Never a blank pane: an idle mascot and what will happen.
-function emptyState($: any, e: any, art: { left: number }, width: number) {
+// Never a blank pane, and never one without its mascot: before the first agent and again
+// once every agent has finished, an idle mascot and what will happen.
+function idleRow($: any, e: any, art: { left: number }, width: number, text: string) {
   const { Box, Text } = $.ui.resolve(e)
   return Box({
     flexDirection: 'row',
@@ -352,7 +362,7 @@ function emptyState($: any, e: any, art: { left: number }, width: number) {
         justifyContent: 'center',
         marginLeft: 1,
         flexShrink: 1,
-        children: [Text({ dimColor: true, children: [EMPTY_TEXT] })],
+        children: [Text({ dimColor: true, children: [text] })],
       }),
     ],
   })
@@ -393,7 +403,7 @@ async function drawPane($: any, e: any) {
     children: [
       header($, e, r, width),
       statCards($, e, values, width),
-      ...(r.agents.length === 0 ? [emptyState($, e, view.art, width)] : []),
+      ...(running.length === 0 ? [idleRow($, e, view.art, width, r.agents.length === 0 ? EMPTY_TEXT : QUIET_TEXT)] : []),
       ...(running.length > 0 ? runningSection($, e, running, view) : []),
       ...(done.length > 0 ? finishedSection($, e, done, width) : []),
     ],
@@ -413,7 +423,7 @@ async function drawBand($: any, e: any, next: any) {
   ensureTicker($, now)
   const { Box, Text, Button } = $.ui.resolve(e)
   const dots = agents.slice(0, BAND_DOTS).map((a) =>
-    Text({ color: paletteFor(a.type, poseOf(a)).b!, children: [a.status === 'running' && frame % 2 === 1 ? '◉' : '●'] }),
+    Text({ color: paletteFor(a.type, poseOf(a)).b!, children: [a.status === 'running' ? DOTS[frame % DOTS.length]! : '●'] }),
   )
   const room = (e.props?.bodyColumns ?? 80) - 7 - dots.length - 10
   const row = Box({

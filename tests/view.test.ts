@@ -15,7 +15,8 @@ function row(over: Partial<AgentRow> = {}): AgentRow {
 
 test('constants', () => {
   expect(ACCENT).toBe('#9B7BEA')
-  expect(DOTS).toEqual(['●', '◉', '○', '◉'])
+  // The pulse never shows ○, the family's glyph for idle.
+  expect(DOTS).toEqual(['●', '●', '◉', '◉'])
   expect(FINISHED_CAP).toBe(50)
   expect(EMPTY_TEXT).toBe('No subagents yet — they appear here when Claude delegates work.')
 })
@@ -172,8 +173,9 @@ test('band facts', () => {
 
 test('glyphs', () => {
   expect(glyphOf('running', 0)).toEqual({ char: '●', color: ACCENT })
-  expect(glyphOf('running', 1)).toEqual({ char: '◉', color: ACCENT })
-  expect(glyphOf('running', 6)).toEqual({ char: '○', color: ACCENT })
+  expect(glyphOf('running', 2)).toEqual({ char: '◉', color: ACCENT })
+  expect(glyphOf('running', 7)).toEqual({ char: '◉', color: ACCENT })
+  for (let f = 0; f < 8; f++) expect(glyphOf('running', f).char).not.toBe('○')
   expect(glyphOf('done', 3)).toEqual({ char: '✓', color: 'success' })
   expect(glyphOf('failed', 3)).toEqual({ char: '✗', color: 'error' })
   expect(glyphOf('stopped', 3)).toEqual({ char: '■', color: 'warning' })

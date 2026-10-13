@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import {
-  base64, encodeCells, frameAt, framesFor, kindOf, paletteFor, spriteSvg,
+  base64, encodeCells, frameAt, framesFor, kindOf, paletteFor, phaseOf, spriteSvg,
   SPRITE_COLUMNS, SPRITE_H, SPRITE_ROWS, SPRITE_W, type Kind, type Pose,
 } from '../hooks/sprites.ts'
 
@@ -49,6 +49,13 @@ test('poses have their lengths', () => {
     expect(framesFor(kind, 'done')).toHaveLength(4)
     expect(framesFor(kind, 'failed')).toHaveLength(8)
   }
+})
+
+test('phases spread agents over the loop', () => {
+  const phases = new Set(['ag-1', 'ag-2', 'ag-3', 'ag-4', 'ag-5', 'ag-6'].map(phaseOf))
+  expect(phases.size).toBeGreaterThan(2)
+  for (const p of phases) expect(p >= 0 && p < 8).toBe(true)
+  expect(phaseOf('ag-1')).toBe(phaseOf('ag-1'))
 })
 
 test('kinds by agent type', () => {

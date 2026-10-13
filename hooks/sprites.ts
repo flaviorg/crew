@@ -154,6 +154,14 @@ export function paletteFor(agentType: string | undefined, pose: Pose): Palette {
   return pose === 'failed' ? { ...SHARED, ...coat, ...GREY } : { ...SHARED, ...coat }
 }
 
+/**
+ * Where in its loop an agent's animation starts, from its id: cards side by side then look,
+ * tap and blink each in their own time instead of in step.
+ */
+export function phaseOf(id: string): number {
+  return hash(id) % 8
+}
+
 /** The frame shown at a tick of the shared FRAME_MS clock. */
 export function frameAt(kind: Kind, pose: Pose, tick: number): Frame {
   const frames = framesFor(kind, pose)

@@ -7,12 +7,15 @@ import { counts, estimate, live, type AgentRow, type AgentStatus, type Roster } 
 /** crew's one accent, used only for what is live. */
 export const ACCENT = '#9B7BEA'
 
-/** The running dot's pulse, one step per animation frame. */
-export const DOTS: readonly string[] = ['●', '◉', '○', '◉']
+/** The running dot's pulse, one step per animation frame. `○` means idle, so it is not in it. */
+export const DOTS: readonly string[] = ['●', '●', '◉', '◉']
 
 export const FINISHED_CAP = 50
 
 export const EMPTY_TEXT = 'No subagents yet — they appear here when Claude delegates work.'
+
+/** The idle line once every agent so far has finished. */
+export const QUIET_TEXT = 'All quiet — new subagents appear here when Claude delegates work.'
 
 const SEP = ' · '
 
