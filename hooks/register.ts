@@ -50,6 +50,18 @@ let paneShown = true // as last seen by the ticker
 let opened = false // the pane opens by itself once per session
 let collapsed = false // the Finished section, folded; kept in $.store so the choice sticks
 
+// Turn ends for agents with no row yet: one that fails on its first request can end before
+// its spawn hook has written the row. The spawn applies its own; the oldest go past EARLY_MAX.
+type End = { at: number; reason?: string; isAborted?: boolean; turnId?: string }
+const early = new Map<string, End>()
+const EARLY_MAX = 20
+
+function keepEarly(id: string, end: End) {
+  early.delete(id)
+  early.set(id, end)
+  if (early.size > EARLY_MAX) early.delete(early.keys().next().value!)
+}
+
 // ── the clock ──────────────────────────────────────────────────────────────────────────
 
 // One clock drives everything that moves: every frame while an agent is live (4 a second,
@@ -437,7 +449,11 @@ export function register(on: any, options: any) {
         workflow: !!e.workflow,
         at,
       }
-      await update($, rosterAtom, (x) => spawned(x, row))
+      await update($, rosterAtom, (x) => {
+        const end = early.get(row.id)
+        return end ? completed(spawned(x, row), row.id, end) : spawned(x, row)
+      })
+      early.delete(row.id)
       ensureTicker($, at)
       await autoOpen($)
     }
@@ -467,7 +483,11 @@ export function register(on: any, options: any) {
   on('turn.complete', async ($: any, e: any, next: any) => {
     if (e.agentId) {
       const at = await $.clock.now()
-      await update($, rosterAtom, (x) => completed(x, e.agentId, { at, reason: e.reason, isAborted: e.isAborted, turnId: e.turnId }))
+      const end: End = { at, reason: e.reason, isAborted: e.isAborted, turnId: e.turnId }
+      await update($, rosterAtom, (x) => {
+        if (!x.agents.some((a) => a.id === e.agentId)) keepEarly(e.agentId, end)
+        return completed(x, e.agentId, end)
+      })
       ensureTicker($, at) // the celebration needs frames
     }
     return next(e)

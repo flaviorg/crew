@@ -306,6 +306,18 @@ test('a finished agent celebrates, then files away', async ($, on) => {
   expect(await ui.find({ text: /◆ crew · 1 done/ })).toBeDefined()
 })
 
+test('a turn end that comes before the spawn\'s row still ends the agent', async ($, on) => {
+  const s = stubs(on)
+  // The agent fails on its first request, before the spawn hook has written its row.
+  await complete($, 'ag-1', { reason: 'error' })
+  await spawn($, 'Fast fail')
+  await s.clock.advance(3_000)
+  const ui: any = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ key: 'agent:ag-1' })).toBeUndefined()
+  expect(await textOf(ui, { key: 'done:ag-1' })).toMatch(/^✗ Fast fail/)
+  expect(await ui.find({ text: /◆ crew · 1 failed/ })).toBeDefined()
+})
+
 test('failed and stopped', async ($, on) => {
   stubs(on)
   await spawn($, 'One')
