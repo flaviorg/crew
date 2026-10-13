@@ -191,8 +191,8 @@ function spend(art: { left: number }, size: number): boolean {
 }
 
 // One agent's mascot for the surface drawing it: half-block pixels in the terminal, a
-// self-animating SVG where Svg exists, a dot in its coat's color otherwise (and once the
-// art budget is spent).
+// self-animating SVG where Svg exists, a dot in its coat's color otherwise (and on a pane
+// too narrow for it, or once the art budget is spent). `phase` offsets its loop.
 function mascot(
   $: any, e: any, id: string, type: string, pose: Pose, alt: string, art: { left: number }, roomy: boolean, phase = 0,
 ) {
