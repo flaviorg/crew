@@ -72,8 +72,9 @@ Then start a new session, or run `/reload-plugins`. Crew is also listed in my
   Past 30 cards, one line says how many more run. When nothing runs, the idle mascot is
   back with a line saying so.
 - **Finished** — newest first, with `✓`, `✗` or `■`, the model, tokens, cost and time.
-  Its `c: Collapse` button folds it and `e: Expand` unfolds it; the choice sticks across
-  sessions. Past 50 rows, one line says how many more.
+  Its `c: Collapse` button folds it and `e: Expand` unfolds it (`c: Hide` and `e: Show` in
+  a narrow pane); the choice sticks across sessions. Past 50 rows, one line says how many
+  more.
 - **The band** — while anything runs, one line above the prompt: a dot per agent in its
   mascot's color, how many run, for how long, and their cost. `o: Open` opens the pane,
   or brings it to the front.
@@ -118,7 +119,8 @@ piece and pose.
 |---|---|
 | `/crew` | Shows the pane, or hides it when it is showing |
 
-In fullscreen the dock shows one pane at a time as tabs; `/crew` brings crew's to the front.
+Claude Code shows one mod pane at a time, docked or above the prompt, with a tab for each;
+`/crew` (or the band's `o: Open`) brings crew's to the front.
 
 ## Options
 
