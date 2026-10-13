@@ -103,3 +103,21 @@ test('svg animates every frame', () => {
   expect(svg).toStartWith('<svg ')
   expect(svg.length).toBeLessThan(131072)
 })
+
+test('repeated frames are drawn once', () => {
+  // idle holds its rest frame by repeating it: two distinct looks, rest and blink.
+  const idle = spriteSvg('general', 'idle', paletteFor('general-purpose', 'idle'))
+  expect(idle.match(/<g /g)).toHaveLength(2)
+  expect(idle).toContain('values="1;1;1;1;1;0;1;1"')
+  expect(spriteSvg('explore', 'done', paletteFor('Explore', 'done')).match(/<g /g)).toHaveLength(2)
+  expect(spriteSvg('custom', 'failed', paletteFor('x', 'failed')).match(/<g /g)).toHaveLength(2)
+})
+
+test('svgs stay small enough for a pane of thirty', () => {
+  // A drawn tree is bounded at 100,000 characters; a mascot must not eat that alone.
+  for (const kind of KINDS) {
+    for (const pose of POSES) {
+      expect(spriteSvg(kind, pose, paletteFor(kind === 'custom' ? 'x' : kind, pose)).length).toBeLessThan(3_500)
+    }
+  }
+})

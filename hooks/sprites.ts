@@ -213,19 +213,22 @@ export function encodeCells(frame: Frame, palette: Palette): string {
   return base64(bytes)
 }
 
-function rects(frame: Frame, palette: Palette): string {
-  let out = ''
+// One <path> per color with a subpath per horizontal run: a fraction of the size of a <rect>
+// per run, which matters because a drawn tree is bounded at 100,000 characters.
+function paths(frame: Frame, palette: Palette): string {
+  const byFill = new Map<string, string>()
+  const fillAt = (row: string, x: number) => (row[x] === '.' ? undefined : palette[row[x]!])
   frame.forEach((row, y) => {
     let x = 0
     while (x < row.length) {
-      const c = row[x]!
+      const fill = fillAt(row, x)
       let end = x + 1
-      while (end < row.length && row[end] === c) end++
-      if (c !== '.' && palette[c]) out += `<rect x="${x}" y="${y}" width="${end - x}" height="1" fill="${palette[c]}"/>`
+      while (end < row.length && fillAt(row, end) === fill) end++
+      if (fill) byFill.set(fill, (byFill.get(fill) ?? '') + `M${x} ${y}h${end - x}v1H${x}z`)
       x = end
     }
   })
-  return out
+  return [...byFill].map(([fill, d]) => `<path fill="${fill}" d="${d}"/>`).join('')
 }
 
 /**
@@ -237,12 +240,19 @@ export function spriteSvg(kind: Kind, pose: Pose, palette: Palette, pixel = 4): 
   const n = frames.length
   const w = SPRITE_W * pixel, h = SPRITE_H * pixel
   const head = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${SPRITE_W} ${SPRITE_H}" width="${w}" height="${h}" shape-rendering="crispEdges">`
+  // Poses hold a frame by repeating it; each distinct frame is drawn once, shown in all its slots.
+  const slotsOf = new Map<string, number[]>()
+  frames.forEach((frame, i) => {
+    const k = frame.join('/')
+    slotsOf.set(k, [...(slotsOf.get(k) ?? []), i])
+  })
+  if (slotsOf.size === 1) return head + paths(frames[0]!, palette) + '</svg>'
   const dur = (n * FRAME_MS) / 1000
   const keyTimes = frames.map((_, i) => (i / n).toFixed(4)).join(';')
-  const body = frames
-    .map((frame, i) => {
-      const values = frames.map((_, j) => (j === i ? 1 : 0)).join(';')
-      return `<g opacity="${i === 0 ? 1 : 0}"><animate attributeName="opacity" values="${values}" keyTimes="${keyTimes}" dur="${dur}s" calcMode="discrete" repeatCount="indefinite"/>${rects(frame, palette)}</g>`
+  const body = [...slotsOf.values()]
+    .map((slots) => {
+      const values = frames.map((_, j) => (slots.includes(j) ? 1 : 0)).join(';')
+      return `<g opacity="${slots.includes(0) ? 1 : 0}"><animate attributeName="opacity" values="${values}" keyTimes="${keyTimes}" dur="${dur}s" calcMode="discrete" repeatCount="indefinite"/>${paths(frames[slots[0]!]!, palette)}</g>`
     })
     .join('')
   return head + body + '</svg>'
