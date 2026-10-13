@@ -27,7 +27,7 @@ a list of the ones that finished — and a one-line band above the prompt while 
 ◆ crew · 1 running · 3 done · 1 failed
 
 ╭──────────────────╮ ╭──────────────────╮ ╭────────────────────╮
-│ Cost             │ │ Tokens           │ │ Time               │
+│ Session cost     │ │ Session tokens   │ │ Session time       │
 │ ≈$1.15           │ │ 948.7k           │ │ 12:18              │
 ╰──────────────────╯ ╰──────────────────╯ ╰────────────────────╯
 
@@ -45,8 +45,14 @@ FINISHED · 4                                         c: Collapse
 ✓ Map the API routes           haiku 4.5 · 52.0k · ≈$0.02 · 2:10
 ```
 
-*(In the terminal the mascot is drawn in full color, two pixels per cell. The Cost card here
+*(In the terminal the mascot is drawn in full color, two pixels per cell. The Session cost card here
 is crew's estimate, marked `≈`: the main loop's share plus each agent's.)*
+
+## In a real session
+
+<p align="center"><img src="docs/media/crew-session.gif" alt="Claude Code with the crew pane docked on the right: Claude starts two Explore agents and a Plan agent; each gets a card with an animated pixel mascot, its model, a context bar, tokens, estimated cost and time; the band above the prompt sums the run; each agent celebrates with a check when it finishes and moves to the Finished list" width="800"></p>
+
+<p align="center"><sub>Recorded in a real Claude Code 2.1.296 session; two quiet stretches are cut.</sub></p>
 
 ## Install
 
@@ -62,26 +68,31 @@ Then start a new session, or run `/reload-plugins`. Crew is also listed in my
 
 ## What you see
 
-- **Stat cards** — **Cost** (the session's real cost when Claude Code reports it, else an
-  estimate marked `≈`), **Tokens** (everything the session's model responses reported:
-  main loop and subagents, input, output and cache) and **Time** (since the session
-  started). On a narrow pane they fold into one line.
+- **Stat cards** — totals for the whole session, the main loop included, not just the
+  agents below them: **Session cost** (the session's real cost when Claude Code reports
+  it, else an estimate marked `≈`), **Session tokens** (everything the session's model
+  responses reported: main loop and subagents, input, output and cache) and **Session
+  time** (since the session started). A narrow card says just Cost, Tokens and Time; on a
+  narrower pane they fold into one line.
 - **Running** — a card per agent: its mascot, its description and a status dot; then its
   type, model, effort, step count and last tool; a thin bar for how full its context is;
   and its tokens, tool calls, estimated cost and time. An agent that finishes stays here
-  for three seconds to celebrate (`✓`) or droop (`✗` failed, `■` stopped), then moves on.
+  for three seconds to celebrate (`✓`) or droop (`✗` failed, `■` stopped), counted under
+  the title as just finished (`RUNNING · 1 · JUST FINISHED · 2`), then moves on.
   Past 30 cards, one line says how many more run. When nothing runs, the idle mascot is
   back with a line saying so.
 - **Finished** — newest first, with `✓`, `✗` or `■`, the model, tokens, cost and time.
   Its `c: Collapse` button folds it and `e: Expand` unfolds it (`c: Hide` and `e: Show` in
   a narrow pane); the choice sticks across sessions. Past 50 rows, one line says how many
   more.
-- **The band** — while anything runs, one line above the prompt: a dot per agent in its
-  mascot's color, how many run, for how long, and their cost. `o: Open` opens the pane,
+- **The band** — while anything runs, one line above the prompt: a dot per live agent in
+  its mascot's color, then the run so far — every agent since the band appeared, the
+  ones already under Finished too: how many run and how many ended, for how long (the
+  clock stops when the last one ends) and their estimated cost. `o: Open` opens the pane,
   or brings it to the front.
 
   ```text
-  ◆ crew ●● 2 running · 0:42 · ≈$0.18  o: Open
+  ◆ crew ●● 2 running · 1 done · 0:42 · ≈$0.18  o: Open
   ```
 
 The pane opens by itself the first time Claude delegates, if the terminal is wide enough
@@ -152,8 +163,9 @@ The built-in table, in $ per million tokens:
 
 ## About the numbers
 
-- **The Cost card** is Claude Code's own figure for the session when it has one. Only
-  when it does not is it crew's estimate, marked `≈`.
+- **The Session cost card** is Claude Code's own figure for the whole session, the main
+  loop's share included, when it has one. Only when it does not is it crew's estimate,
+  marked `≈`. So it is more than the agents' costs added up; the band's `≈` is theirs alone.
 - **An agent's cost** is always an estimate (`≈`): its tokens times the price table.
   Claude Code reports the session's cost, not each subagent's. A model with no price
   shows `—`.
@@ -197,7 +209,7 @@ A drawing has a size limit, so with many agents at once only the first ones get 
 
 ```bash
 claude plugin validate --strict .   # manifest, hooks and calls
-claude plugin test .                 # 113 tests, no session or sign-in needed
+claude plugin test .                 # 115 tests, no session or sign-in needed
 claude --plugin-dir .                # try it in a session; edits hot-reload
 ```
 
