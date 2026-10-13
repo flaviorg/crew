@@ -24,6 +24,10 @@ type Stubs = {
   clock: any
   opens: any[]
   closes: string[]
+  /** `open` and `close`, in the order the mod asked for them. */
+  calls: string[]
+  /** Crew's open pane is a tab behind another plugin's, as in a fullscreen dock. */
+  behind: boolean
   toasts: string[]
   stored: Record<string, unknown>
   usage: any
@@ -45,7 +49,7 @@ type StubOptions = {
 
 // Everything the mod may call on $, answered in memory, plus the engine beneath its hooks.
 function stubs(on: any, o: StubOptions = {}): Stubs {
-  const s: Stubs = { clock: null, opens: [], closes: [], toasts: [], stored: { ...(o.store ?? {}) }, usage: USAGE, answer: null, broken: false, periods: 0 }
+  const s: Stubs = { clock: null, opens: [], closes: [], calls: [], behind: false, toasts: [], stored: { ...(o.store ?? {}) }, usage: USAGE, answer: null, broken: false, periods: 0 }
   const deny = new Set(o.deny ?? [])
   const open = new Set<string>()
   let n = 0
@@ -54,11 +58,15 @@ function stubs(on: any, o: StubOptions = {}): Stubs {
   on('agent.list', () => ({ value: o.list ?? [] }))
   on('ui.open', ($: any, e: any) => {
     s.opens.push(e)
+    s.calls.push('open')
+    // A pane that opens comes to the front; a second open of an open id only retitles it.
+    if (!open.has(e.id)) s.behind = false
     open.add(e.id)
     return { value: o.placed === false ? { isPlaced: false, reason: 'the terminal is 100 columns; 144 are needed' } : { isPlaced: true } }
   })
   on('ui.close', ($: any, e: any) => {
     s.closes.push(e.id)
+    s.calls.push('close')
     if (deny.has('ui.close')) return { deny: 'kept open' }
     open.delete(e.id)
     return { value: undefined }
@@ -66,7 +74,7 @@ function stubs(on: any, o: StubOptions = {}): Stubs {
   on('ui.panes', () =>
     deny.has('ui.panes')
       ? { deny: 'panes down' }
-      : { value: [...open].map((id) => ({ id, title: 'Crew', isShown: o.placed !== false, isFocused: false, isPlaced: o.placed !== false })) })
+      : { value: [...open].map((id) => ({ id, title: 'Crew', isShown: o.placed !== false && !s.behind, isFocused: false, isPlaced: o.placed !== false })) })
   on('ui.toast', ($: any, e: any) => { s.toasts.push(e.text); return { value: undefined } })
   on('command.register', () => ({ value: { command: 'crew' } }))
   on('store.get', ($: any, e: any) => ({ value: s.stored[e.key] }))
@@ -487,6 +495,43 @@ test('/crew toggles', async ($, on) => {
   expect(s.closes).toEqual(['crew'])
   await $.command.run({ command: 'crew', args: '' })
   expect(s.opens).toHaveLength(2)
+})
+
+test('/crew brings the pane to the front from behind another tab', async ($, on) => {
+  const s = stubs(on)
+  await $.command.run({ command: 'crew', args: '' })
+  // Another plugin's pane opens in the dock: crew's is a tab behind it.
+  s.behind = true
+  expect(await $.command.run({ command: 'crew', args: '' })).toEqual({})
+  // An open of an open id only retitles it, so crew closes its tab and opens it again.
+  expect(s.calls).toEqual(['open', 'close', 'open'])
+  expect(s.opens[1]).toEqual({ id: 'crew', title: 'Crew', columns: 60 })
+  expect(s.behind).toBe(false)
+  // In front, the next /crew hides it.
+  await $.command.run({ command: 'crew', args: '' })
+  expect(s.calls).toEqual(['open', 'close', 'open', 'close'])
+})
+
+test('the band\'s Open brings the pane to the front, and never hides it', async ($, on) => {
+  const s = stubs(on)
+  await spawn($, 'Scan the repo')
+  s.behind = true
+  const ui: any = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await ui.press({ key: 'band-open' })
+  expect(s.calls).toEqual(['open', 'close', 'open'])
+  expect(s.behind).toBe(false)
+  await ui.press({ key: 'band-open' })
+  expect(s.calls).toEqual(['open', 'close', 'open', 'open'])
+})
+
+test('a spawn leaves an open pane where it is', async ($, on) => {
+  const s = stubs(on)
+  await $.command.run({ command: 'crew', args: '' })
+  s.behind = true
+  await spawn($, 'Scan the repo')
+  // Opened unasked, it does not take the front from the pane the person is looking at.
+  expect(s.closes).toEqual([])
+  expect(s.behind).toBe(true)
 })
 
 test('/crew opens the pane when the pane list cannot be read', async ($, on) => {

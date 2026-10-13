@@ -104,10 +104,14 @@ async function clockNow($: any): Promise<number> {
   }
 }
 
-// Whether crew's pane is shown; null when the host cannot say.
-async function paneIsShown($: any): Promise<boolean | null> {
+type PaneState = 'shown' | 'behind' | 'closed'
+
+// Crew's pane: shown, open but not shown (a tab behind another pane in a fullscreen dock,
+// or waiting undrawn), or not open; null when the host cannot say.
+async function paneState($: any): Promise<PaneState | null> {
   try {
-    return (await $.ui.panes()).some((p: any) => p.id === PANE && p.isShown)
+    const pane = (await $.ui.panes()).find((p: any) => p.id === PANE)
+    return pane === undefined ? 'closed' : pane.isShown ? 'shown' : 'behind'
   } catch {
     return null
   }
@@ -126,7 +130,7 @@ async function onTick($: any) {
     if (isLive) return
     if (frame % 4 === 0) {
       // A pane list the host cannot give counts as no pane: the clock stops, not spins.
-      paneShown = (await paneIsShown($)) === true
+      paneShown = (await paneState($)) === 'shown'
       if (!paneShown) return stopTicker()
     }
     // With nothing live the pane shows its idle mascot, which blinks: draw just the frames
@@ -162,6 +166,21 @@ async function openPane($: any) {
     await $.ui.open(OPEN)
   } catch {}
   ensureTicker($, await clockNow($))
+}
+
+// Shows the pane at the person's word. A fullscreen dock shows one pane at a time, the rest
+// tabs behind it, and an open of an open id only retitles it: a pane behind is closed and
+// opened again, which brings it to the front. A refused close rejects.
+async function showPane($: any, state: PaneState | null) {
+  if (state === 'behind') await $.ui.close({ id: PANE })
+  await openPane($)
+}
+
+// The band's o: Open never hides the pane; a refused close leaves it where it is.
+async function openFromBand($: any) {
+  try {
+    await showPane($, await paneState($))
+  } catch {}
 }
 
 // The first spawn opens the pane by itself. Unasked, a pane is seated only on a wide
@@ -432,7 +451,7 @@ async function drawBand($: any, e: any, next: any) {
       Text({ bold: true, children: ['◆ crew '] }),
       ...dots,
       Text({ dimColor: true, children: [' ' + bandFacts(r, now, overrides, room) + '  '] }),
-      Button({ key: 'band-open', plain: true, hotkey: 'o', label: 'Open', onPress: () => openPane($) }),
+      Button({ key: 'band-open', plain: true, hotkey: 'o', label: 'Open', onPress: () => openFromBand($) }),
     ],
   })
   return Box({ flexDirection: 'column', children: [row, await next(e)] })
@@ -515,12 +534,14 @@ export function register(on: any, options: any) {
     return next(e)
   }).catch(($: any, e: any, next: any) => next(e))
 
-  // Hides the pane when it is shown; otherwise opens it (or seats one waiting undrawn). When
-  // the pane list cannot be read, opening is the useful guess. A registered command has no
-  // core beneath it, so a failure answers in words instead of passing on.
+  // Hides the pane when it is shown; otherwise shows it, bringing one open behind another
+  // pane's tab to the front. When the pane list cannot be read, opening is the useful guess.
+  // A registered command has no core beneath it, so a failure answers in words instead of
+  // passing on.
   on('command.run', { command: 'crew' }, async ($: any) => {
-    if ((await paneIsShown($)) === true) await $.ui.close({ id: PANE })
-    else await openPane($)
+    const state = await paneState($)
+    if (state === 'shown') await $.ui.close({ id: PANE })
+    else await showPane($, state)
     return {}
   }).catch(($: any, e: any, next: any) => (next.called ? next(e) : { text: 'crew: could not show or hide the panel' }))
 
