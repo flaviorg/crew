@@ -29,24 +29,34 @@ const ZERO_WIDTH = /^[\p{Mn}\p{Me}\u200b-\u200f\ufe00-\ufe0f]$/u
 const WIDE =
   /^[\u1100-\u115f\u2329\u232a\u2e80-\u303e\u3041-\u33ff\u3400-\u4dbf\u4e00-\u9fff\ua000-\ua4cf\ua960-\ua97f\uac00-\ud7a3\uf900-\ufaff\ufe10-\ufe19\ufe30-\ufe6f\uff00-\uff60\uffe0-\uffe6\u{20000}-\u{3fffd}]$/u
 const PICTOGRAPH = /^\p{Extended_Pictographic}$/u
+const EMOJI = /^\p{Emoji_Presentation}$/u
+const EMOJI_VS16 = /^\p{Emoji}\ufe0f$/u
 
-function cellsOf(ch: string): number {
+// What widths are counted by: a character, with the VS16 (U+FE0F) right after it if any.
+const UNITS = /[^\ufe0f]\ufe0f?|\ufe0f/gu
+const unitsOf = (s: string): string[] => s.match(UNITS) ?? []
+
+function cellsOf(unit: string): number {
+  // A VS16 asks for the symbol before it to be drawn as an emoji (⚠️, ✔️): two cells.
+  if (EMOJI_VS16.test(unit)) return 2
+  const ch = String.fromCodePoint(unit.codePointAt(0)!)
   if (ZERO_WIDTH.test(ch)) return 0
-  // Emoji past U+1F000 are wide; older symbols (©, ✓, ●) are one cell unless asked otherwise.
-  if (ch.codePointAt(0)! >= 0x1f000 && PICTOGRAPH.test(ch)) return 2
+  // Emoji drawn as emoji by default are wide (✅ ⚡ 🐛), and the rest past U+1F000; older
+  // symbols (©, ✓, ●) are one cell unless asked otherwise.
+  if (EMOJI.test(ch) || (ch.codePointAt(0)! >= 0x1f000 && PICTOGRAPH.test(ch))) return 2
   return WIDE.test(ch) ? 2 : 1
 }
 
 /** How many terminal cells `s` takes: two for wide characters and emoji, none for marks. */
 export function widthOf(s: string): number {
   let w = 0
-  for (const ch of s) w += cellsOf(ch)
+  for (const u of unitsOf(s)) w += cellsOf(u)
   return w
 }
 
 /**
- * Cuts to `width` cells with a trailing `…`, never splitting a character. Control
- * characters become spaces, so whatever it returns is safe to draw.
+ * Cuts to `width` cells with a trailing `…`, never splitting a character (or a symbol from
+ * its VS16). Control characters become spaces, so whatever it returns is safe to draw.
  */
 export function truncate(s: string, width: number): string {
   if (width <= 0) return ''
@@ -54,10 +64,10 @@ export function truncate(s: string, width: number): string {
   if (widthOf(clean) <= width) return clean
   let out = ''
   let w = 0
-  for (const ch of clean) {
-    const c = cellsOf(ch)
+  for (const u of unitsOf(clean)) {
+    const c = cellsOf(u)
     if (w + c > width - 1) break
-    out += ch
+    out += u
     w += c
   }
   return out + '…'

@@ -46,6 +46,20 @@ test('width in cells', () => {
   expect(widthOf('e\u0301')).toBe(1)
   // crew's own glyphs are one cell.
   expect(widthOf('◆●◉✓✗■≈…━─')).toBe(10)
+  expect(widthOf('○—·')).toBe(3)
+})
+
+test('emoji are two cells, below U+1F000 too', () => {
+  // Drawn as emoji by default: two cells in a terminal, and in Claude Code's own measure.
+  for (const e of ['✅', '⚡', '⭐', '❌', '✨', '⏳', '❓', '🐛']) expect(widthOf(e)).toBe(2)
+  // A VS16 (U+FE0F) asks for a symbol to be drawn as an emoji: the pair is two cells.
+  expect(widthOf('⚠️')).toBe(2)
+  expect(widthOf('✔️')).toBe(2)
+  expect(widthOf('⚠')).toBe(1)
+  expect(widthOf('1️⃣')).toBe(2)
+  // truncate counts the same, and never parts a symbol from its VS16.
+  expect(truncate('⚠️⚠️⚠️', 4)).toBe('⚠️…')
+  expect(truncate('✅ done', 4)).toBe('✅ …')
 })
 
 test('one line', () => {
@@ -163,6 +177,15 @@ function dotsOf(s: string): number[] {
   }
   return at
 }
+
+test('a finished title with an emoji keeps to the width', () => {
+  // ✅ and ⚠️ take two cells each, so the title gives up one more character than ASCII would.
+  const at = (description: string, w: number) => finishedLines([ended(description, 'claude-haiku-4-5', 9_800, 5_000, 0.04)], w)[0]!
+  expect(at('✅ Verify the build passes', 40)).toEqual({ title: '✅ Verify the bu…', right: '9.8k · ≈$0.04 · 0:05' })
+  expect(at('⚠️ Audit the risky migration', 40)).toEqual({ title: '⚠️ Audit the ris…', right: '9.8k · ≈$0.04 · 0:05' })
+  // 26 cells, not the 25 a one-cell ✅ would make it: one too many beside the full right side.
+  expect(at('✅ Verify the build passes', 60)).toEqual({ title: '✅ Verify the build pass…', right: 'haiku 4.5 · 9.8k · ≈$0.04 · 0:05' })
+})
 
 test('finished rows line up as columns', () => {
   const lines = finishedLines(crewRows(), 70)
