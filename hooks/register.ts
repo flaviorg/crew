@@ -16,16 +16,20 @@ import {
   SVG_PIXEL, type Pose,
 } from './sprites.ts'
 import {
-  ACCENT, bandFacts, bar, cards, cardsLine, ctxLabel, DOTS, EMPTY_TEXT, FINISHED_CAP, finishedLines, foldLabel, glyphOf,
-  headerFacts, metaLine, oneLine, QUIET_TEXT, runningTitle, statsLine, truncate, widthOf, type Card,
+  ACCENT, bandFacts, bar, cards, cardsLine, ctxLabel, ctxPercent, DOTS, EMPTY_TEXT, FINISHED_CAP, finishedLines, foldLabel,
+  GAUGE_PX, gaugeSvg, glyphOf, headerFacts, metaLine, oneLine, QUIET_TEXT, runningTitle, statsLine, truncate, widthOf, type Card,
 } from './view.ts'
 
 const PANE = 'crew'
 const OPEN = { id: PANE, title: 'Crew', columns: 60 } as const
 
-// A drawn tree is bounded at 100,000 characters. Mascot art may take this much of it
-// (thirty terminal mascots, about ten SVG ones); past it, mascots are dots.
+// A drawn tree is bounded at 100,000 characters: past it, what comes last is cut. Mascot
+// art may take this much of it: thirty terminal mascots, or about eight SVG ones on a
+// remote surface, whose running cards carry their gauges as pictures too (up to
+// RUNNING_CAP of them, some 300 characters each, which the smaller budget leaves room
+// for); past it, mascots are dots.
 const ART_BUDGET = 32_000
+const ART_BUDGET_REMOTE = 24_000
 /** Running cards drawn; past this, one line says how many more. */
 const RUNNING_CAP = 30
 /** Dots in the band, one per live agent. */
@@ -270,6 +274,47 @@ function statCards($: any, e: any, list: Card[], width: number) {
   return Box({ flexDirection: 'row', gap: 1, marginTop: 1, children: list.map(card) })
 }
 
+// The context gauge and its label, ending under the status glyph. In the terminal, a row
+// of `━` and `─` in cells. On the surfaces that draw `Svg`, a thin picture that takes the
+// room the label leaves: in the Desktop app a `━` comes from a wider font than the cell
+// the width counts, and a row of them wraps. The label's box never shrinks, so it is never
+// cut or wrapped; the picture's does, and is clipped if a surface draws it too wide. (The
+// table names `Svg` on every surface, a fragment where there is none: so the surface decides.)
+// A column too narrow for a picture and its label draws the label alone, cut to fit, as
+// the terminal does.
+function gaugeRow($: any, e: any, a: AgentRow, pct: number, width: number) {
+  const { Box, Text, Svg } = $.ui.resolve(e)
+  const label = ctxLabel(pct)
+  const running = a.status === 'running'
+  const room = width - label.length - 1
+  if (Svg && room >= 3 && (e.surface === 'desktop' || e.surface === 'vscode' || e.surface === 'mobile')) {
+    return Box({
+      flexDirection: 'row',
+      alignItems: 'center',
+      children: [
+        Box({
+          flexGrow: 1,
+          flexShrink: 1,
+          minWidth: 0,
+          overflow: 'hidden',
+          children: [Svg({ source: gaugeSvg(pct, running), alt: `context ${ctxPercent(pct)}% full`, height: GAUGE_PX })],
+        }),
+        Box({ flexShrink: 0, children: [Text({ dimColor: true, children: [' ' + label] })] }),
+      ],
+    })
+  }
+  const gauge = room >= 3 ? bar(pct, room) : { filled: '', track: '' }
+  const lit = running ? ACCENT : 'subtle'
+  return Box({
+    flexDirection: 'row',
+    children: [
+      gauge.filled !== '' && Text({ color: lit, children: [gauge.filled] }),
+      gauge.track !== '' && Text({ color: 'subtle', children: [gauge.track] }),
+      Text({ dimColor: true, children: [room >= 3 ? ' ' + label : truncate(label, width)] }),
+    ],
+  })
+}
+
 // Mascot on the left; description and status, meta, context bar and stats on the right.
 // The first card sits right under its section's title, as the first Finished row does.
 function agentCard($: any, e: any, a: AgentRow, view: View, first: boolean) {
@@ -281,11 +326,6 @@ function agentCard($: any, e: any, a: AgentRow, view: View, first: boolean) {
   // The text column: what the mascot (or its dot) and the margin leave.
   const width = Math.max(1, view.width - (settings.mascot === 'on' && roomy ? SPRITE_COLUMNS : 1) - 1)
   const pct = (100 * a.context) / contextWindow(a.model, view.window, view.mainModel)
-  // The gauge and its label end where the status glyph above them does.
-  const label = ctxLabel(pct)
-  const room = width - label.length - 1
-  const gauge = room >= 3 ? bar(pct, room) : { filled: '', track: '' }
-  const lit = a.status === 'running' ? ACCENT : 'subtle'
   return Box({
     key: 'agent:' + a.id,
     flexDirection: 'row',
@@ -306,14 +346,7 @@ function agentCard($: any, e: any, a: AgentRow, view: View, first: boolean) {
             ],
           }),
           Text({ dimColor: true, children: [metaLine(a, width)] }),
-          Box({
-            flexDirection: 'row',
-            children: [
-              gauge.filled !== '' && Text({ color: lit, children: [gauge.filled] }),
-              gauge.track !== '' && Text({ color: 'subtle', children: [gauge.track] }),
-              Text({ dimColor: true, children: [room >= 3 ? ' ' + label : truncate(label, width)] }),
-            ],
-          }),
+          gaugeRow($, e, a, pct, width),
           Text({ dimColor: true, children: [statsLine(a, view.now, estimate(a, overrides), width)] }),
         ],
       }),
@@ -420,7 +453,8 @@ async function drawPane($: any, e: any) {
   // as an inline frame already does, and lays out to what is left.
   const docked = e.props?.placement === 'dock'
   const width = Math.max(1, (e.props?.bodyColumns ?? 60) - (docked ? 2 : 0))
-  const view: View = { width, now, mainModel, window: usage?.context?.window ?? 200_000, art: { left: ART_BUDGET } }
+  const art = { left: e.surface === 'terminal' ? ART_BUDGET : ART_BUDGET_REMOTE }
+  const view: View = { width, now, mainModel, window: usage?.context?.window ?? 200_000, art }
   const sum = totals(r, overrides, mainModel)
   const startedAt = typeof usage?.startedAt === 'number' ? usage.startedAt : now
   const values = cards({ realUsd: usage?.cost?.usd ?? null, estUsd: sum.estUsd, tokens: sum.tokens, sessionMs: now - startedAt })

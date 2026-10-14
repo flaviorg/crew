@@ -1,8 +1,8 @@
 import { expect, test } from 'claude-code/testing'
 import { completed, EMPTY, run, spawned, stepped, type AgentRow } from '../hooks/roster.ts'
 import {
-  foldLabel, ACCENT, bandFacts, bar, cards, cardsLine, ctxLabel, DOTS, EMPTY_TEXT, FINISHED_CAP, finishedLines, finishedRight,
-  fit, glyphOf, headerFacts, metaLine, oneLine, runningTitle, statsLine, truncate, widthOf,
+  foldLabel, ACCENT, bandFacts, bar, cards, cardsLine, ctxLabel, ctxPercent, DOTS, EMPTY_TEXT, FINISHED_CAP, finishedLines,
+  finishedRight, fit, GAUGE_PX, gaugeSvg, glyphOf, headerFacts, metaLine, oneLine, runningTitle, statsLine, TRACK, truncate, widthOf,
 } from '../hooks/view.ts'
 
 function row(over: Partial<AgentRow> = {}): AgentRow {
@@ -113,6 +113,32 @@ test('ctx label', () => {
   expect(ctxLabel(20.6)).toBe('ctx 21%')
   expect(ctxLabel(130)).toBe('ctx 100%')
   expect(ctxLabel(-1)).toBe('ctx 0%')
+  expect(ctxPercent(20.6)).toBe(21)
+  expect(ctxPercent(130)).toBe(100)
+  expect(ctxPercent(NaN)).toBe(0)
+})
+
+test('the gauge as a picture', () => {
+  expect(GAUGE_PX).toBe(3)
+  expect(TRACK).toBe('#8A877F')
+  const lit = gaugeSvg(21, true)
+  // Wider than any pane, so it takes its whole slot; the parts in percent of it, 3 px tall
+  // with round ends.
+  expect(lit).toStartWith('<svg xmlns="http://www.w3.org/2000/svg" width="4000" height="3">')
+  expect(lit).toContain('<rect width="100%" height="3" rx="1.5" fill="#8A877F" fill-opacity="0.3"/>')
+  expect(lit).toContain(`<rect width="21%" height="3" rx="1.5" fill="${ACCENT}"/>`)
+  expect(lit).toMatch(/<\/svg>$/)
+  expect(lit.match(/<rect/g)).toHaveLength(2)
+  // The accent is for what runs: an agent that ended keeps a grey fill.
+  expect(gaugeSvg(21, false)).toContain('<rect width="21%" height="3" rx="1.5" fill="#8A877F"/>')
+  // One decimal of the percent, held to 0–100.
+  expect(gaugeSvg(20.64, true)).toContain('width="20.6%"')
+  expect(gaugeSvg(150, true)).toContain(`<rect width="100%" height="3" rx="1.5" fill="${ACCENT}"/>`)
+  // Nothing filled draws no second rect: no zero-width pill.
+  for (const p of [0, -5, NaN, Infinity * 0]) expect(gaugeSvg(p, true).match(/<rect/g)).toHaveLength(1)
+  // Nothing in it a surface refuses: no control characters, no script.
+  expect(lit).not.toMatch(/[\u0000-\u001f]|<script|on[a-z]+=/)
+  expect(lit.length).toBeLessThan(300)
 })
 
 test('stats line', () => {

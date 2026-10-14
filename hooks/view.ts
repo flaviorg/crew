@@ -134,8 +134,37 @@ export function bar(percent: number, width: number): { filled: string; track: st
   return { filled: '━'.repeat(n), track: '─'.repeat(w - n) }
 }
 
+/** The context percentage as shown: whole, held to 0–100. */
+export function ctxPercent(percent: number): number {
+  return Math.round(clamp(percent))
+}
+
 export function ctxLabel(percent: number): string {
-  return `ctx ${Math.round(clamp(percent))}%`
+  return `ctx ${ctxPercent(percent)}%`
+}
+
+/** The gauge's height where it is a picture, in CSS pixels. */
+export const GAUGE_PX = 3
+
+/** The gauge's track, and its filled part once the agent has ended: a middle grey, for dark and light themes alike. */
+export const TRACK = '#8A877F'
+
+/**
+ * The gauge as a picture, for the surfaces that draw `Svg` (the Desktop app, VS Code,
+ * mobile), where a row of `━` comes from a wider fallback font and wraps: a track
+ * GAUGE_PX tall with round ends, and the filled part over it, the accent while the agent
+ * runs. The markup is wider than any pane, so the picture takes its whole slot; its parts
+ * are in percent of it, so they stretch with the slot and the ends stay round.
+ */
+export function gaugeSvg(percent: number, lit: boolean): string {
+  const p = Math.round(clamp(percent) * 10) / 10
+  const rect = (w: string, fill: string, more = '') => `<rect width="${w}" height="${GAUGE_PX}" rx="${GAUGE_PX / 2}" fill="${fill}"${more}/>`
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" width="4000" height="${GAUGE_PX}">` +
+    rect('100%', TRACK, ' fill-opacity="0.3"') +
+    (p > 0 ? rect(`${p}%`, lit ? ACCENT : TRACK) : '') +
+    '</svg>'
+  )
 }
 
 const usdOrDash = (usd: number | null): string => (usd === null ? '—' : formatUsd(usd, true))

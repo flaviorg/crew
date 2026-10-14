@@ -233,6 +233,22 @@ test('steps fill tokens and the context bar', async ($, on) => {
   // the label ends under the status glyph: 52 cells of bar, 21% of them filled.
   expect(await textOf(ui, { type: 'Text', text: /^━+$/ })).toBe('━'.repeat(Math.round(0.21 * 52)))
   expect(await textOf(ui, { type: 'Text', text: /^─+$/ })).toHaveLength(52 - Math.round(0.21 * 52))
+  await ui.unmount()
+  // Where the surface draws Svg, the gauge is a picture 3 px tall that takes the room the
+  // label leaves, the label in a box that never shrinks: no row of ━, which the Desktop app
+  // draws in a wider font than the cell and wraps.
+  for (const surface of ['desktop', 'mobile', 'vscode'] as const) {
+    ui = await $.ui.mount({ ...PANE, surface })
+    const gauge = (await ui.findAll({ type: 'Svg' })).find((x: any) => x.props.alt === 'context 21% full')
+    expect(gauge).toBeDefined()
+    expect(gauge.props.height).toBe(3)
+    expect(gauge.props.width).toBeUndefined()
+    expect(gauge.props.isInteractive).toBeUndefined()
+    expect(gauge.props.source).toContain('<rect width="21%" height="3" rx="1.5" fill="#9B7BEA"/>')
+    expect(await ui.find({ type: 'Text', text: ' ctx 21%' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /[━─]/ })).toBeUndefined()
+    await ui.unmount()
+  }
 })
 
 // The chunks a step's stream delivers, in order, and how it ended.
@@ -378,9 +394,12 @@ test('a turn end that comes before the spawn\'s row still ends the agent', async
 })
 
 test('failed and stopped', async ($, on) => {
-  stubs(on)
+  const s = stubs(on)
   await spawn($, 'One')
   await spawn($, 'Two')
+  const some = { input_tokens: 2_000, output_tokens: 500, cache_read_input_tokens: 40_000, cache_creation_input_tokens: 0, model: 'claude-haiku-4-5' }
+  await step($, s, 'ag-1', some)
+  await step($, s, 'ag-2', some)
   await complete($, 'ag-1', { reason: 'error' })
   await complete($, 'ag-2', { reason: 'answer', isAborted: true })
   for (const surface of SURFACES) {
@@ -388,7 +407,17 @@ test('failed and stopped', async ($, on) => {
     expect(await textOf(ui, { key: 'agent:ag-1' })).toContain('✗')
     expect(await textOf(ui, { key: 'agent:ag-2' })).toContain('■')
     expect(await ui.find({ text: /◆ crew · 1 failed · 1 stopped/ })).toBeDefined()
-    if (surface === 'desktop') expect((await ui.findAll({ type: 'Svg' })).map((x: any) => x.props.alt)).toEqual(['One — failed', 'Two — failed'])
+    if (surface === 'desktop') {
+      // Each card's mascot, then its gauge; an ended agent's gauge keeps a grey fill, not the accent.
+      const svgs = await ui.findAll({ type: 'Svg' })
+      expect(svgs.map((x: any) => x.props.alt)).toEqual(['One — failed', 'context 21% full', 'Two — failed', 'context 21% full'])
+      const gauges = svgs.filter((x: any) => x.props.alt.startsWith('context '))
+      expect(gauges).toHaveLength(2)
+      for (const g of gauges) {
+        expect(g.props.source).toContain('<rect width="21%" height="3" rx="1.5" fill="#8A877F"/>')
+        expect(g.props.source).not.toContain('#9B7BEA')
+      }
+    }
     await ui.unmount()
   }
 })
@@ -728,6 +757,24 @@ test('every line fits a narrow pane', async ($, on) => {
   expect(needs(await band.drawn())).toBeLessThanOrEqual(50)
 })
 
+test('a remote pane too narrow for the picture keeps the label', async ($, on) => {
+  const s = stubs(on)
+  await spawn($, 'Draft the migration plan', 'Plan')
+  await step($, s, 'ag-1', { input_tokens: 4_000, output_tokens: 3_000, cache_read_input_tokens: 148_000, cache_creation_input_tokens: 2_000, model: 'claude-opus-5-5' })
+  for (const surface of ['desktop', 'mobile', 'vscode'] as const) {
+    // Ten columns leave the text column eight: no room for a picture beside `ctx 77%`.
+    const ui: any = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 10 }, surface })
+    expect((await ui.findAll({ type: 'Svg' })).some((x: any) => String(x.props.alt).startsWith('context '))).toBe(false)
+    expect(await ui.find({ type: 'Text', text: /^ctx 77%$/ })).toBeDefined()
+    await ui.unmount()
+    // Twenty leave eighteen: the picture is back, and the label whole beside it.
+    const wide: any = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 20 }, surface })
+    expect((await wide.findAll({ type: 'Svg' })).some((x: any) => x.props.alt === 'context 77% full')).toBe(true)
+    expect(await wide.find({ type: 'Text', text: ' ctx 77%' })).toBeDefined()
+    await wide.unmount()
+  }
+})
+
 test('a docked pane keeps a column clear of the dock\'s border', async ($, on) => {
   const s = stubs(on, { cost: 12.5 })
   await spawn($, 'Scan the repo for TODO markers')
@@ -744,7 +791,8 @@ test('a docked pane keeps a column clear of the dock\'s border', async ($, on) =
     expect(root.props.paddingLeft).toBe(1)
     expect(root.props.paddingRight).toBe(1)
     expect(await cardCells(ui)).toBe(68)
-    expect(await gaugeCells(ui)).toBe(50)
+    if (surface === 'terminal') expect(await gaugeCells(ui)).toBe(50)
+    else expect((await ui.findAll({ type: 'Svg' })).some((x: any) => x.props.alt === 'context 21% full')).toBe(true)
     expect(needs(root)).toBeLessThanOrEqual(70)
     await ui.unmount()
     // Inline the frame has its own space: no padding, all 70 cells.
@@ -753,7 +801,8 @@ test('a docked pane keeps a column clear of the dock\'s border', async ($, on) =
     expect(root.props.paddingLeft).toBeUndefined()
     expect(root.props.paddingRight).toBeUndefined()
     expect(await cardCells(ui)).toBe(70)
-    expect(await gaugeCells(ui)).toBe(52)
+    if (surface === 'terminal') expect(await gaugeCells(ui)).toBe(52)
+    else expect((await ui.findAll({ type: 'Svg' })).some((x: any) => x.props.alt === 'context 21% full')).toBe(true)
     await ui.unmount()
   }
   for (const cols of [26, 30, 44]) {
@@ -821,8 +870,13 @@ test('draws thirty running agents', async ($, on) => {
     // A drawn tree is bounded at 100,000 characters; stay well inside it.
     expect(JSON.stringify(await ui.drawn()).length).toBeLessThan(80_000)
     // Mascot art has a budget: every Raster fits it, while SVGs past it fall back to dots.
+    // Every running card keeps its gauge, a picture of its own on a remote surface.
     if (surface === 'terminal') expect(await ui.findAll({ type: 'Raster' })).toHaveLength(30)
-    else expect((await ui.findAll({ type: 'Svg' })).length).toBeGreaterThanOrEqual(8)
+    else {
+      const alts = (await ui.findAll({ type: 'Svg' })).map((x: any) => String(x.props.alt))
+      expect(alts.filter((a) => !a.startsWith('context ')).length).toBeGreaterThanOrEqual(8)
+      expect(alts.filter((a) => a.startsWith('context '))).toHaveLength(30)
+    }
     await ui.unmount()
   }
 })
@@ -857,7 +911,9 @@ test('mascot off draws a dot', { options: { mascot: 'off' } }, async ($, on) => 
   for (const surface of SURFACES) {
     const ui: any = await $.ui.mount({ ...PANE, surface })
     expect(await ui.find({ type: 'Raster' })).toBeUndefined()
-    expect(await ui.find({ type: 'Svg' })).toBeUndefined()
+    // No mascot; the gauge, a picture of its own where the surface draws one, stays.
+    const alts = (await ui.findAll({ type: 'Svg' })).map((x: any) => x.props.alt)
+    expect(alts).toEqual(surface === 'terminal' ? [] : ['context 0% full'])
     // The mascot's place holds a dot in its coat's color.
     expect((await ui.findAll({ type: 'Text', text: '●' })).some((x: any) => x.props.color === '#35B5AC')).toBe(true)
     await ui.unmount()
