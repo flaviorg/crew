@@ -4,8 +4,8 @@
 // subagent's, so crew multiplies an agent's tokens by this table and labels the result ≈.
 
 export type Tokens = { input: number; output: number; cacheRead: number; cacheWrite: number }
-/** $ per million tokens. */
-export type Price = { input: number; output: number; cacheRead: number; cacheWrite: number }
+/** $ per million tokens; `longPrompt`, when a release has them, its rates for a long request. */
+export type Price = { input: number; output: number; cacheRead: number; cacheWrite: number; longPrompt?: Price }
 export type Family = 'opus' | 'sonnet' | 'haiku' | 'fable' | 'mythos'
 
 /** The usage fields a model response reports (TurnUsage), all optional here. */
@@ -27,6 +27,12 @@ const T5_25 = rate(5, 25, 0.5, 6.25)
 const T3_15 = rate(3, 15, 0.3, 3.75)
 
 /**
+ * A request whose prompt (input and cache, read or written) is past this many tokens is a
+ * long one: Claude Code prices each such request at its release's long-prompt rates.
+ */
+export const LONG_PROMPT = 100_000
+
+/**
  * List prices by release (`opus 5.5`, as release() names it): the model catalog Claude
  * Code 2.1.296 ships, which its own session cost is priced from. Prices change between
  * releases of one family: Opus 5.5 costs less than Opus 5, Opus 4.1 three times more.
@@ -34,8 +40,8 @@ const T3_15 = rate(3, 15, 0.3, 3.75)
  * A cache write is the 5-minute kind, 1.25× input: what a subagent writes unless its
  * settings ask for an hour (2× input). Hooks get a response's four token counts and no
  * more, so an hour's writes, fast mode and US-only inference (1.1×) cost more than this
- * says. So does a Haiku 5.5 request past 100k prompt tokens (5×): crew sums tokens, not
- * requests.
+ * says. Haiku 5.5 alone has long-prompt rates, 5× its own: crew counts a long request's
+ * tokens apart, so they are priced at those.
  */
 export const PRICES: Readonly<Record<string, Price>> = Object.freeze({
   'opus 5.5': rate(4, 20, 0.2, 5),
@@ -53,7 +59,7 @@ export const PRICES: Readonly<Record<string, Price>> = Object.freeze({
   'sonnet 4': T3_15,
   'sonnet 3.7': T3_15,
   'sonnet 3.5': T3_15,
-  'haiku 5.5': rate(0.1, 0.5, 0.01, 0.125),
+  'haiku 5.5': Object.freeze({ ...rate(0.1, 0.5, 0.01, 0.125), longPrompt: rate(0.5, 2.5, 0.05, 0.625) }),
   'haiku 4.5': rate(1, 5, 0.1, 1.25),
   'haiku 3.5': rate(0.8, 4, 0.08, 1),
   'fable 5.1': T10_50_READ_025,
@@ -142,8 +148,14 @@ export function priceFor(model: string, overrides: Record<string, Price>): Price
   return f ? PRICES[NEWEST[f]] ?? null : null
 }
 
-export function cost(t: Tokens, p: Price): number {
-  return (t.input * p.input + t.output * p.output + t.cacheRead * p.cacheRead + t.cacheWrite * p.cacheWrite) / 1e6
+const rated = (t: Tokens, p: Price): number =>
+  (t.input * p.input + t.output * p.output + t.cacheRead * p.cacheRead + t.cacheWrite * p.cacheWrite) / 1e6
+
+/** What `t` costs at `p`; `long`, the share of `t` that long requests sent, at `p`'s long-prompt rates. */
+export function cost(t: Tokens, p: Price, long: Tokens = ZERO): number {
+  if (!p.longPrompt) return rated(t, p)
+  const short = { input: t.input - long.input, output: t.output - long.output, cacheRead: t.cacheRead - long.cacheRead, cacheWrite: t.cacheWrite - long.cacheWrite }
+  return rated(short, p) + rated(long, p.longPrompt)
 }
 
 export function addTokens(a: Tokens, b: Tokens): Tokens {
@@ -171,6 +183,11 @@ export function fromUsage(u: UsageLike | null | undefined): Tokens {
 export function contextOf(u: UsageLike | null | undefined): number {
   const t = fromUsage(u)
   return t.input + t.cacheRead + t.cacheWrite
+}
+
+/** The tokens of a long request (its prompt past LONG_PROMPT), added to `long`; else `long`. */
+export function addLong(long: Tokens | undefined, u: UsageLike | null | undefined): Tokens | undefined {
+  return contextOf(u) > LONG_PROMPT ? addTokens(long ?? ZERO, fromUsage(u)) : long
 }
 
 /**

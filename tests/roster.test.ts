@@ -265,6 +265,25 @@ test('totals adds main and agents', () => {
   expect(totals(EMPTY, {}, '').estUsd).toBe(null)
 })
 
+// One Haiku 5.5 request with 150k tokens read from the cache: Claude Code prices it at the
+// long-prompt rates, (2 × 0.5 + 1,000 × 2.5 + 150,000 × 0.05) / 1e6, 5× the base rates.
+test('a request past 100k prompt tokens is priced at its long-prompt rates', () => {
+  const long = { input_tokens: 2, output_tokens: 1_000, cache_read_input_tokens: 150_000, cache_creation_input_tokens: 0, model: 'claude-haiku-5-5' }
+  let r = spawned(EMPTY, { ...agent('a1'), model: 'claude-haiku-5-5' })
+  r = stepped(r, 'a1', long, undefined, 1)
+  expect(Math.abs(estimate(one(r), {})! - 0.010001)).toBeLessThan(1e-12)
+  // A prompt of exactly 100k is not past it: that request is at the base rates.
+  r = stepped(r, 'a1', { ...long, cache_read_input_tokens: 99_998 }, undefined, 2)
+  expect(Math.abs(estimate(one(r), {})! - (0.010001 + 0.00150018))).toBeLessThan(1e-12)
+  expect(one(r).tokens).toEqual({ input: 4, output: 2_000, cacheRead: 249_998, cacheWrite: 0 })
+  // The main loop's requests too.
+  const main = stepped(EMPTY, undefined, long, undefined, 1)
+  expect(Math.abs(totals(main, {}, 'claude-haiku-5-5').estUsd! - 0.010001)).toBeLessThan(1e-12)
+  // A `prices` override has no long-prompt rates: every request is at its price.
+  const flat = { input: 1, output: 1, cacheRead: 1, cacheWrite: 1 }
+  expect(estimate(one(r), { haiku: flat })).toBe(0.252002)
+})
+
 test('drops oldest finished past MAX_AGENTS', () => {
   let r = spawned(spawned(EMPTY, agent('old-1', 0)), agent('old-2', 1))
   r = completed(r, 'old-1', { at: 2, reason: 'answer' })

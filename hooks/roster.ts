@@ -5,7 +5,7 @@
 // JSON: they live in $.state.
 
 import {
-  addTokens, contextOf, cost, fromUsage, priceFor, totalTokens, ZERO,
+  addLong, addTokens, contextOf, cost, fromUsage, priceFor, totalTokens, ZERO,
   type Price, type Tokens, type UsageLike,
 } from './pricing.ts'
 import type { Pose } from './sprites.ts'
@@ -31,10 +31,12 @@ export type AgentRow = {
   tools: number
   lastTool?: string
   tokens: Tokens
+  /** The share of `tokens` its long requests sent (each past LONG_PROMPT); absent while none. */
+  long?: Tokens
   context: number
 }
 
-export type Roster = { agents: AgentRow[]; main: Tokens; mainSteps: number }
+export type Roster = { agents: AgentRow[]; main: Tokens; mainSteps: number; mainLong?: Tokens }
 
 /** A turn.step result's usage: token counts plus the model that answered. */
 export type TurnUsageLike = UsageLike & { model?: string }
@@ -124,12 +126,15 @@ export function stepped(
   turnId?: string,
 ): Roster {
   if (agentId === undefined) {
-    return { ...r, main: usage ? addTokens(r.main, fromUsage(usage)) : r.main, mainSteps: r.mainSteps + 1 }
+    const mainLong = addLong(r.mainLong, usage)
+    return { ...r, main: usage ? addTokens(r.main, fromUsage(usage)) : r.main, mainSteps: r.mainSteps + 1, ...(mainLong ? { mainLong } : {}) }
   }
   return patch(r, agentId, (a) => {
     let next: AgentRow = { ...a, steps: a.steps + 1, seenAt: at }
     if (usage) {
       next.tokens = addTokens(a.tokens, fromUsage(usage))
+      const long = addLong(a.long, usage)
+      if (long) next.long = long
       next.context = contextOf(usage)
       if (typeof usage.model === 'string' && usage.model !== '') next.model = usage.model
     }
@@ -247,7 +252,7 @@ export function counts(r: Roster): { running: number; done: number; failed: numb
 /** The agent's cost from its tokens and the price table; null when its model has no price. */
 export function estimate(a: AgentRow, overrides: Record<string, Price>): number | null {
   const price = priceFor(a.model, overrides)
-  return price ? cost(a.tokens, price) : null
+  return price ? cost(a.tokens, price, a.long) : null
 }
 
 /** All tokens the session reported, and their estimated cost (null when nothing had a price). */
@@ -258,7 +263,7 @@ export function totals(r: Roster, overrides: Record<string, Price>, mainModel: s
     if (usd !== null) estUsd = (estUsd ?? 0) + usd
   }
   const mainPrice = priceFor(mainModel, overrides)
-  add(mainPrice ? cost(r.main, mainPrice) : null)
+  add(mainPrice ? cost(r.main, mainPrice, r.mainLong) : null)
   for (const a of r.agents) {
     tokens += totalTokens(a.tokens)
     add(estimate(a, overrides))

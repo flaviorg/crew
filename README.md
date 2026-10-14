@@ -147,7 +147,8 @@ Set them with `/plugin configure crew@crew`:
 | `prices` | JSON | *(empty)* | Override the price table, in $ per million tokens |
 
 `prices` keys are model families (`opus`, `sonnet`, `haiku`, `fable`, `mythos`) or any
-part of a model id; the longest match wins, and beats the built-in table. For example:
+part of a model id; the longest match wins, and beats the built-in table. An override's
+rates apply to every request, long ones too. For example:
 
 ```json
 { "opus": { "input": 4, "output": 20, "cacheRead": 0.2, "cacheWrite": 5 },
@@ -156,7 +157,9 @@ part of a model id; the longest match wins, and beats the built-in table. For ex
 
 The built-in table is Claude Code's own list prices (the model catalog it ships and prices
 its session cost from), in $ per million tokens. A release it does not list is priced as
-its family's newest.
+its family's newest. Haiku 5.5 has a second row: a request whose prompt (input and cache)
+is past 100k tokens costs 5× as much, all of it, and crew prices each such request at
+that row, as Claude Code does.
 
 | Model | Input | Output | Cache read | Cache write |
 |---|---|---|---|---|
@@ -167,6 +170,7 @@ its family's newest.
 | Sonnet 5 | 2 | 10 | 0.20 | 2.50 |
 | Sonnet 3.5 – 4.6 | 3 | 15 | 0.30 | 3.75 |
 | Haiku 5.5 | 0.10 | 0.50 | 0.01 | 0.125 |
+| Haiku 5.5, a request past 100k prompt tokens | 0.50 | 2.50 | 0.05 | 0.625 |
 | Haiku 4.5 | 1 | 5 | 0.10 | 1.25 |
 | Haiku 3.5 | 0.80 | 4 | 0.08 | 1 |
 | Fable 5.1, Mythos 5.1 | 10 | 50 | 0.25 | 12.50 |
@@ -222,7 +226,7 @@ A drawing has a size limit, so with many agents at once only the first ones get 
 
 ```bash
 claude plugin validate --strict .   # manifest, hooks and calls
-claude plugin test .                 # 128 tests, no session or sign-in needed
+claude plugin test .                 # 130 tests, no session or sign-in needed
 claude --plugin-dir .                # try it in a session; edits hot-reload
 ```
 

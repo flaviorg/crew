@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import {
   addTokens, contextOf, contextWindow, cost, family, formatClock, formatTokens, formatUsd,
-  fromUsage, parsePrices, priceFor, PRICES, release, shortModel, totalTokens, ZERO,
+  fromUsage, LONG_PROMPT, parsePrices, priceFor, PRICES, release, shortModel, totalTokens, ZERO,
 } from '../hooks/pricing.ts'
 
 const FABLE = { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 }
@@ -39,7 +39,11 @@ test('releases by model id, in every provider spelling', () => {
 // Claude Code's own model catalog (2.1.296), in $ per million tokens.
 const OPUS_55 = { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 }
 const SONNET_55 = { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 }
-const HAIKU_55 = { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 }
+// Haiku 5.5 also has long-prompt rates, 5× its own, for a request past 100k prompt tokens.
+const HAIKU_55 = {
+  input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125,
+  longPrompt: { input: 0.5, output: 2.5, cacheRead: 0.05, cacheWrite: 0.625 },
+}
 const FABLE_51 = { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 }
 
 test('the price table is Claude Code\'s list prices', () => {
@@ -59,10 +63,28 @@ test('the price table is Claude Code\'s list prices', () => {
   expect(priceFor('claude-3-5-haiku-20241022', {})).toEqual({ input: 0.8, output: 4, cacheRead: 0.08, cacheWrite: 1 })
   expect(priceFor('us.anthropic.claude-opus-5-5', {})).toEqual(OPUS_55)
   expect(priceFor('claude-opus-5-5[1m]', {})).toEqual(OPUS_55)
-  // A cache write is the 5-minute kind, 1.25× input, in every row.
-  for (const p of Object.values(PRICES)) expect(p.cacheWrite).toBe(p.input * 1.25)
+  // A cache write is the 5-minute kind, 1.25× input, in every row and every long-prompt rate.
+  for (const p of Object.values(PRICES)) {
+    expect(p.cacheWrite).toBe(p.input * 1.25)
+    if (p.longPrompt) expect(p.longPrompt.cacheWrite).toBe(p.longPrompt.input * 1.25)
+  }
   expect(cost({ input: 1e6, output: 0, cacheRead: 0, cacheWrite: 0 }, OPUS_55)).toBe(4)
   expect(Math.abs(cost({ input: 0, output: 2e6, cacheRead: 1e6, cacheWrite: 1e6 }, OPUS_55) - 45.2)).toBeLessThan(1e-9)
+})
+
+// Claude Code picks a request's rates on its own: past 100k prompt tokens (input and cache,
+// read or written) a release with long-prompt rates charges those for all of it.
+test('long requests are priced at their release\'s long-prompt rates', () => {
+  expect(LONG_PROMPT).toBe(100_000)
+  const t = { input: 2, output: 1_000, cacheRead: 150_000, cacheWrite: 0 }
+  const haiku = priceFor('claude-haiku-5-5', {})!
+  expect(Math.abs(cost(t, haiku) - 0.0020002)).toBeLessThan(1e-12)
+  // `long` is the share of the tokens that long requests sent: here all of them.
+  expect(Math.abs(cost(t, haiku, t) - 0.010001)).toBeLessThan(1e-12)
+  const half = { input: 1, output: 500, cacheRead: 75_000, cacheWrite: 0 }
+  expect(Math.abs(cost(t, haiku, half) - (0.0010001 + 0.0050005))).toBeLessThan(1e-12)
+  // A release without them prices its long requests like the rest.
+  expect(cost(t, OPUS_55, t)).toBe(cost(t, OPUS_55))
 })
 
 test('a release the table does not know is priced as its family\'s newest', () => {

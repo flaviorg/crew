@@ -26,11 +26,13 @@ export type AgentRow = {
   tools: number
   lastTool?: string
   tokens: Tokens
+  /** The share of `tokens` its long requests sent (each past 100k prompt tokens). */
+  long?: Tokens
   context: number
 }
 
 /** Every subagent of the session, plus the main loop's own tokens and steps. */
-export type Roster = { agents: AgentRow[]; main: Tokens; mainSteps: number }
+export type Roster = { agents: AgentRow[]; main: Tokens; mainSteps: number; mainLong?: Tokens }
 
 declare module 'claude-code' {
   interface PluginState {
