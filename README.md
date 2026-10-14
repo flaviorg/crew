@@ -146,21 +146,31 @@ Set them with `/plugin configure crew@crew`:
 | `mascot` | `on`, `off` | `on` | Draw the animated mascots; `off` draws a dot in the agent's color |
 | `prices` | JSON | *(empty)* | Override the price table, in $ per million tokens |
 
-`prices` keys are model families (`opus`, `sonnet`, `haiku`) or any part of a model id;
-the longest match wins. For example:
+`prices` keys are model families (`opus`, `sonnet`, `haiku`, `fable`, `mythos`) or any
+part of a model id; the longest match wins, and beats the built-in table. For example:
 
 ```json
-{ "opus": { "input": 5, "output": 25, "cacheRead": 0.5, "cacheWrite": 6.25 },
-  "fable": { "input": 2, "output": 10, "cacheRead": 0.2, "cacheWrite": 2.5 } }
+{ "opus": { "input": 4, "output": 20, "cacheRead": 0.2, "cacheWrite": 5 },
+  "opus-4-1": { "input": 15, "output": 75, "cacheRead": 1.5, "cacheWrite": 18.75 } }
 ```
 
-The built-in table, in $ per million tokens:
+The built-in table is Claude Code's own list prices (the model catalog it ships and prices
+its session cost from), in $ per million tokens. A release it does not list is priced as
+its family's newest.
 
-| Family | Input | Output | Cache read | Cache write |
+| Model | Input | Output | Cache read | Cache write |
 |---|---|---|---|---|
-| opus | 5 | 25 | 0.50 | 6.25 |
-| sonnet | 3 | 15 | 0.30 | 3.75 |
-| haiku | 1 | 5 | 0.10 | 1.25 |
+| Opus 5.5 | 4 | 20 | 0.20 | 5 |
+| Opus 4.5 – 5 | 5 | 25 | 0.50 | 6.25 |
+| Opus 4, 4.1 | 15 | 75 | 1.50 | 18.75 |
+| Sonnet 5.5 | 2 | 10 | 0.10 | 2.50 |
+| Sonnet 5 | 2 | 10 | 0.20 | 2.50 |
+| Sonnet 3.5 – 4.6 | 3 | 15 | 0.30 | 3.75 |
+| Haiku 5.5 | 0.10 | 0.50 | 0.01 | 0.125 |
+| Haiku 4.5 | 1 | 5 | 0.10 | 1.25 |
+| Haiku 3.5 | 0.80 | 4 | 0.08 | 1 |
+| Fable 5.1, Mythos 5.1 | 10 | 50 | 0.25 | 12.50 |
+| Fable 5, Mythos 5 | 10 | 50 | 1 | 12.50 |
 
 ## About the numbers
 
@@ -169,7 +179,9 @@ The built-in table, in $ per million tokens:
   marked `≈`. So it is more than the agents' costs added up; the band's `≈` is theirs alone.
 - **An agent's cost** is always an estimate (`≈`): its tokens times the price table.
   Claude Code reports the session's cost, not each subagent's. A model with no price
-  shows `—`.
+  shows `—`. A cache write is priced as the 5-minute kind (1.25× input), which is what a
+  subagent writes unless its settings ask for an hour; hooks are not told an hour's
+  writes (2× input), fast mode or US-only inference apart, so those cost more than shown.
 - **Tokens** are counted once, from each model response. The total a turn reports at its
   end is the same tokens again, so it is not added.
 - **Context %** is the agent's last request (input plus cache) over its model's window:
@@ -210,7 +222,7 @@ A drawing has a size limit, so with many agents at once only the first ones get 
 
 ```bash
 claude plugin validate --strict .   # manifest, hooks and calls
-claude plugin test .                 # 121 tests, no session or sign-in needed
+claude plugin test .                 # 125 tests, no session or sign-in needed
 claude --plugin-dir .                # try it in a session; edits hot-reload
 ```
 

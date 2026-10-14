@@ -32,7 +32,7 @@
     "prices": {
       "type": "string",
       "title": "Price overrides",
-      "description": "JSON overriding the price table, $ per million tokens, e.g. {\"opus\":{\"input\":5,\"output\":25,\"cacheRead\":0.5,\"cacheWrite\":6.25}}",
+      "description": "JSON overriding the price table, $ per million tokens, e.g. {\"opus\":{\"input\":4,\"output\":20,\"cacheRead\":0.2,\"cacheWrite\":5}}",
       "default": ""
     }
   }

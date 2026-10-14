@@ -226,8 +226,32 @@ test('estimate uses the price table', () => {
   let r = spawned(EMPTY, agent('a1'))
   r = stepped(r, 'a1', { input_tokens: 1_000_000, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, model: 'claude-haiku-4-5' }, undefined, 1)
   expect(estimate(one(r), {})).toBe(1)
-  expect(estimate({ ...one(r), model: 'claude-fable-5-1' }, {})).toBe(null)
+  expect(estimate({ ...one(r), model: 'claude-fable-5-1' }, {})).toBe(10)
   expect(estimate({ ...one(r), model: 'claude-fable-5-1' }, { fable: { input: 2, output: 0, cacheRead: 0, cacheWrite: 0 } })).toBe(2)
+  expect(estimate({ ...one(r), model: 'mystery' }, {})).toBe(null)
+})
+
+// Three agents of a real session on Opus 5.5, two steps each (the outputs rounded), beside
+// a Session cost card of $0.49: the main loop's two requests, its cache writes the 1-hour
+// kind, were about $0.19 of it, which leaves the agents about $0.30. At Opus 4.5's prices
+// each showed ≈$0.13 and the three ≈$0.40.
+test('three Opus 5.5 agents two steps in', () => {
+  const steps: Record<string, [number, number, number][]> = {
+    a1: [[190, 4_975, 13_983], [195, 18_958, 3_695]],
+    a2: [[190, 4_975, 14_020], [195, 18_995, 3_691]],
+    a3: [[190, 5_098, 14_126], [195, 19_224, 3_717]],
+  }
+  let r = EMPTY
+  for (const [id, list] of Object.entries(steps)) {
+    r = spawned(r, { ...agent(id), model: 'claude-opus-5-5' })
+    for (const [out, read, write] of list) {
+      r = stepped(r, id, { input_tokens: 2, output_tokens: out, cache_read_input_tokens: read, cache_creation_input_tokens: write, model: 'claude-opus-5-5' }, undefined, 1)
+    }
+  }
+  expect(r.agents.map((a) => a.tokens.cacheWrite)).toEqual([17_678, 17_711, 17_843])
+  const usd = r.agents.map((a) => estimate(a, {})!)
+  expect(usd.map((u) => u.toFixed(2))).toEqual(['0.10', '0.10', '0.10'])
+  expect(Math.abs(usd.reduce((a, b) => a + b, 0) - 0.303753)).toBeLessThan(1e-9)
 })
 
 test('totals adds main and agents', () => {
@@ -235,7 +259,7 @@ test('totals adds main and agents', () => {
   let r = spawned(EMPTY, agent('a1'))
   r = stepped(r, 'a1', { ...M, model: 'claude-haiku-4-5' }, undefined, 1)
   r = stepped(r, undefined, { ...M, model: 'claude-opus-5-5' }, undefined, 2)
-  expect(totals(r, {}, 'claude-opus-5-5')).toEqual({ tokens: 2_000_000, estUsd: 6 })
+  expect(totals(r, {}, 'claude-opus-5-5')).toEqual({ tokens: 2_000_000, estUsd: 5 })
   // The main loop on an unknown model is left out of the estimate, not counted as zero.
   expect(totals(r, {}, 'mystery')).toEqual({ tokens: 2_000_000, estUsd: 1 })
   expect(totals(EMPTY, {}, '').estUsd).toBe(null)

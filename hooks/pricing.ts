@@ -6,7 +6,7 @@
 export type Tokens = { input: number; output: number; cacheRead: number; cacheWrite: number }
 /** $ per million tokens. */
 export type Price = { input: number; output: number; cacheRead: number; cacheWrite: number }
-export type Family = 'opus' | 'sonnet' | 'haiku'
+export type Family = 'opus' | 'sonnet' | 'haiku' | 'fable' | 'mythos'
 
 /** The usage fields a model response reports (TurnUsage), all optional here. */
 export type UsageLike = {
@@ -18,10 +18,53 @@ export type UsageLike = {
 
 export const ZERO: Tokens = Object.freeze({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 })
 
-export const PRICES: Readonly<Record<Family, Price>> = Object.freeze({
-  opus: Object.freeze({ input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 }),
-  sonnet: Object.freeze({ input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 }),
-  haiku: Object.freeze({ input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 }),
+const rate = (input: number, output: number, cacheRead: number, cacheWrite: number): Price =>
+  Object.freeze({ input, output, cacheRead, cacheWrite })
+const T15_75 = rate(15, 75, 1.5, 18.75)
+const T10_50 = rate(10, 50, 1, 12.5)
+const T10_50_READ_025 = rate(10, 50, 0.25, 12.5)
+const T5_25 = rate(5, 25, 0.5, 6.25)
+const T3_15 = rate(3, 15, 0.3, 3.75)
+
+/**
+ * List prices by release (`opus 5.5`, as release() names it): the model catalog Claude
+ * Code 2.1.296 ships, which its own session cost is priced from. Prices change between
+ * releases of one family: Opus 5.5 costs less than Opus 5, Opus 4.1 three times more.
+ *
+ * A cache write is the 5-minute kind, 1.25× input: what a subagent writes unless its
+ * settings ask for an hour (2× input). Hooks get a response's four token counts and no
+ * more, so an hour's writes, fast mode and US-only inference (1.1×) cost more than this
+ * says. So does a Haiku 5.5 request past 100k prompt tokens (5×): crew sums tokens, not
+ * requests.
+ */
+export const PRICES: Readonly<Record<string, Price>> = Object.freeze({
+  'opus 5.5': rate(4, 20, 0.2, 5),
+  'opus 5': T5_25,
+  'opus 4.8': T5_25,
+  'opus 4.7': T5_25,
+  'opus 4.6': T5_25,
+  'opus 4.5': T5_25,
+  'opus 4.1': T15_75,
+  'opus 4': T15_75,
+  'sonnet 5.5': rate(2, 10, 0.1, 2.5),
+  'sonnet 5': rate(2, 10, 0.2, 2.5),
+  'sonnet 4.6': T3_15,
+  'sonnet 4.5': T3_15,
+  'sonnet 4': T3_15,
+  'sonnet 3.7': T3_15,
+  'sonnet 3.5': T3_15,
+  'haiku 5.5': rate(0.1, 0.5, 0.01, 0.125),
+  'haiku 4.5': rate(1, 5, 0.1, 1.25),
+  'haiku 3.5': rate(0.8, 4, 0.08, 1),
+  'fable 5.1': T10_50_READ_025,
+  'fable 5': T10_50,
+  'mythos 5.1': T10_50_READ_025,
+  'mythos 5': T10_50,
+})
+
+/** Each family's newest release: the price of one the table does not know yet. */
+const NEWEST: Readonly<Record<Family, string>> = Object.freeze({
+  opus: 'opus 5.5', sonnet: 'sonnet 5.5', haiku: 'haiku 5.5', fable: 'fable 5.1', mythos: 'mythos 5.1',
 })
 
 const FIELDS = ['input', 'output', 'cacheRead', 'cacheWrite'] as const
@@ -31,7 +74,27 @@ export function family(model: string): Family | null {
   if (m.includes('opus')) return 'opus'
   if (m.includes('sonnet')) return 'sonnet'
   if (m.includes('haiku')) return 'haiku'
+  if (m.includes('fable')) return 'fable'
+  if (m.includes('mythos')) return 'mythos'
   return null
+}
+
+/**
+ * The release a model id names, in any provider's spelling: `claude-opus-4-5-20251101`,
+ * `us.anthropic.claude-opus-4-5-20251101-v1:0` and `claude-opus-4-5@20251101` are all
+ * `opus 4.5`; `claude-opus-4-20250514` is `opus 4`, `claude-3-5-haiku-…` is `haiku 3.5`.
+ * Null when the id carries no version.
+ */
+export function release(model: string): string | null {
+  const m = model.toLowerCase()
+  // claude-<name>-<major>[-<minor>], then a date or a suffix: a minor is at most two digits.
+  const modern = /claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?!\d)/.exec(m)
+  // claude-<major>[-<minor>]-<name>, the older order
+  const older = modern ? null : /claude-(\d+)(?:-(\d{1,2}))?-([a-z]+)/.exec(m)
+  const [name, major, minor] = modern ? [modern[1], modern[2], modern[3]] : older ? [older[3], older[1], older[2]] : []
+  if (name === undefined || major === undefined) return null
+  // `claude-opus-4-0` is Opus 4.
+  return `${name} ${Number(major)}${minor !== undefined && Number(minor) > 0 ? '.' + Number(minor) : ''}`
 }
 
 function isPrice(v: unknown): v is Price {
@@ -62,7 +125,8 @@ export function parsePrices(json: string): Record<string, Price> {
 
 /**
  * The price of a model: the longest override key the id contains (so `opus-5-5` beats
- * `opus`, and a family name works as a key), then the built-in table, else null.
+ * `opus`, and a family name works as a key), then the table's row for its release, then
+ * its family's newest release, else null.
  */
 export function priceFor(model: string, overrides: Record<string, Price>): Price | null {
   const m = model.toLowerCase()
@@ -71,8 +135,11 @@ export function priceFor(model: string, overrides: Record<string, Price>): Price
     if (m.includes(key) && (best === null || key.length > best.length)) best = key
   }
   if (best !== null) return overrides[best] ?? null
+  const r = release(m)
+  const listed = r === null ? undefined : PRICES[r]
+  if (listed !== undefined) return listed
   const f = family(m)
-  return f ? PRICES[f] : null
+  return f ? PRICES[NEWEST[f]] ?? null : null
 }
 
 export function cost(t: Tokens, p: Price): number {
