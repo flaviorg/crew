@@ -51,7 +51,7 @@ is crew's estimate, marked `≈`: the main loop's share plus each agent's.)*
 
 <p align="center"><img src="docs/media/crew-session.gif" alt="Claude Code with the crew pane docked on the right: Claude starts two Explore agents and a Plan agent; each gets a card with an animated pixel mascot, its model, a context bar, tokens, estimated cost and time; the band above the prompt sums the run; each agent celebrates with a check when it finishes and moves to the Finished list" width="800"></p>
 
-<p align="center"><sub>Recorded in a real Claude Code 2.1.296 session; two quiet stretches are cut.</sub></p>
+<p align="center"><sub>Recorded in a real Claude Code 2.1.299 session; two quiet stretches are cut.</sub></p>
 
 ## Install
 
