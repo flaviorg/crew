@@ -1,6 +1,6 @@
 {
   "name": "crew",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "A live panel of the subagents Claude delegates to: model, context, tokens, cost and time, each with an animated mascot.",
   "author": { "name": "flaviorg", "url": "https://github.com/flaviorg" },
   "repository": "https://github.com/flaviorg/crew",
