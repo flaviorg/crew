@@ -7,7 +7,7 @@
 **A Claude Code mod with a live panel of the subagents Claude delegates to — each with its own animated pixel mascot.**
 
 [![Claude Code mod](https://img.shields.io/badge/Claude_Code-mod-9B7BEA?style=flat-square)](https://code.claude.com/docs/en/plugins/mods/overview)
-[![Tested with](https://img.shields.io/badge/tested_with-Claude_Code_2.1.296-0d0d0f?style=flat-square)](#compatibility)
+[![Tested with](https://img.shields.io/badge/tested_with-Claude_Code_2.1.299-0d0d0f?style=flat-square)](#compatibility)
 [![License: MIT](https://img.shields.io/badge/license-MIT-8a877f?style=flat-square)](LICENSE)
 
 <img src="docs/media/mascots.png" alt="The four mascots: general-purpose (coral, with an antenna), Explore (teal, with feelers), Plan (violet, with a cap) and a custom agent type (amber, with a sprout)" width="560">
@@ -74,8 +74,9 @@ Then start a new session, or run `/reload-plugins`. Crew is also listed in my
   time** (since the session started). A narrow card says just Cost, Tokens and Time; on a
   narrower pane they fold into one line.
 - **Running** — a card per agent: its mascot, its description and a status dot; then its
-  type, model, effort, step count and last tool; a thin bar for how full its context is;
-  and its tokens, tool calls, estimated cost and time. An agent that finishes stays here
+  type, model, effort, step count and last tool; a thin bar for how full its context is
+  (a row of `━` in the terminal; in the Desktop app, a bar three pixels tall that fills
+  as the context does); and its tokens, tool calls, estimated cost and time. An agent that finishes stays here
   for three seconds to celebrate (`✓`) or droop (`✗` failed, `■` stopped), counted under
   the title as just finished (`RUNNING · 1 · JUST FINISHED · 2`), then moves on.
   Past 30 cards, one line says how many more run. When nothing runs, the idle mascot is
@@ -215,18 +216,20 @@ The `calls:` line lists every mods API call it makes.
 
 ## Compatibility
 
-Tested with Claude Code **2.1.296** in the terminal and the Desktop app's Code tab. The
+Tested with Claude Code **2.1.299** in the terminal and the Desktop app's Code tab. The
 terminal draws the mascots as pixel art in half blocks; the Desktop app draws the same
-pixels as an animated SVG. A pane Claude Code opens without being asked needs a terminal
+pixels as an animated SVG, and each running card's context bar as a picture three pixels
+tall (a row of `━` there comes from a wider font than the cell, and wraps). A pane Claude Code opens without being asked needs a terminal
 144 columns wide (110 once you have opened it yourself); `/crew` opens it at any width.
 A drawing has a size limit, so with many agents at once only the first ones get a mascot
-(about thirty in the terminal, ten in the Desktop app) and the rest get a colored dot.
+(about thirty in the terminal, eight in the Desktop app, where the bars take some of the
+room) and the rest get a colored dot.
 
 ## Development
 
 ```bash
 claude plugin validate --strict .   # manifest, hooks and calls
-claude plugin test .                 # 132 tests, no session or sign-in needed
+claude plugin test .                 # 134 tests, no session or sign-in needed
 claude --plugin-dir .                # try it in a session; edits hot-reload
 ```
 
