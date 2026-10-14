@@ -12,7 +12,8 @@ import {
   toolUsed, totals, type AgentRow, type Roster,
 } from './roster.ts'
 import {
-  encodeCells, FRAME_MS, frameAt, kindOf, paletteFor, phaseOf, spriteSvg, SPRITE_COLUMNS, SPRITE_ROWS, type Pose,
+  encodeCells, FRAME_MS, frameAt, kindOf, paletteFor, phaseOf, spriteSvg, SPRITE_COLUMNS, SPRITE_H, SPRITE_ROWS, SPRITE_W,
+  SVG_PIXEL, type Pose,
 } from './sprites.ts'
 import {
   ACCENT, bandFacts, bar, cards, cardsLine, ctxLabel, DOTS, EMPTY_TEXT, FINISHED_CAP, finishedLines, foldLabel, glyphOf,
@@ -224,7 +225,9 @@ function mascot(
     } else if (e.surface === 'desktop' || e.surface === 'vscode' || e.surface === 'mobile') {
       const { Svg } = $.ui.resolve(e)
       const source = spriteSvg(kindOf(type), pose, palette)
-      if (Svg && spend(art, source.length + alt.length)) return Svg({ source, alt, width: 44, height: 40, isInteractive: true })
+      if (Svg && spend(art, source.length + alt.length)) {
+        return Svg({ source, alt, width: SPRITE_W * SVG_PIXEL, height: SPRITE_H * SVG_PIXEL, isInteractive: true })
+      }
     }
   }
   const { Text } = $.ui.resolve(e)

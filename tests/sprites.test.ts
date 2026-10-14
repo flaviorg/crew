@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import {
   base64, encodeCells, frameAt, framesFor, kindOf, paletteFor, phaseOf, spriteSvg,
-  SPRITE_COLUMNS, SPRITE_H, SPRITE_ROWS, SPRITE_W, type Kind, type Pose,
+  SPRITE_COLUMNS, SPRITE_H, SPRITE_ROWS, SPRITE_W, SVG_PIXEL, type Kind, type Pose,
 } from '../hooks/sprites.ts'
 
 const KINDS: Kind[] = ['general', 'explore', 'plan', 'custom']
@@ -27,6 +27,14 @@ function cellWords(cells: string, index: number): number[] {
   const view = new DataView(bytes.buffer)
   return [0, 1, 2].map((w) => view.getUint32(index * 12 + w * 4, true))
 }
+
+test('the mascot is 9 x 8: 9 columns by 4 rows, one per line of a card', () => {
+  expect([SPRITE_W, SPRITE_H]).toEqual([9, 8])
+  expect([SPRITE_COLUMNS, SPRITE_ROWS]).toEqual([9, 4])
+  // In the Desktop app, about two lines of text tall.
+  expect([SPRITE_W * SVG_PIXEL, SPRITE_H * SVG_PIXEL]).toEqual([36, 32])
+  expect(spriteSvg('general', 'idle', paletteFor('general-purpose', 'idle'))).toContain('viewBox="0 0 9 8" width="36" height="32"')
+})
 
 test('every frame has the right size', () => {
   for (const kind of KINDS) {
@@ -87,17 +95,17 @@ test('base64 vectors', () => {
   expect(base64(new Uint8Array([]))).toBe('')
 })
 
-test('cells encode 55 cells of 12 bytes', () => {
+test('cells encode 36 cells of 12 bytes', () => {
   const cells = encodeCells(frameAt('general', 'working', 0), paletteFor('general-purpose', 'working'))
-  expect(SPRITE_COLUMNS * SPRITE_ROWS).toBe(55)
-  expect(cells).toHaveLength(880)
-  expect(unbase64(cells)).toHaveLength(660)
+  expect(SPRITE_COLUMNS * SPRITE_ROWS).toBe(36)
+  expect(cells).toHaveLength(576)
+  expect(unbase64(cells)).toHaveLength(432)
 })
 
 test('first cell of working general is the antenna tip', () => {
   const cells = encodeCells(frameAt('general', 'working', 0), paletteFor('general-purpose', 'working'))
-  // The top-middle cell: row 0, column 5. Its top pixel is the lit tip, its bottom the stalk.
-  expect(cellWords(cells, 5)).toEqual([0x2580, 0xe0a100, 0xa0522d])
+  // The top-middle cell: row 0, column 4. Its top pixel is the lit tip, its bottom the stalk.
+  expect(cellWords(cells, 4)).toEqual([0x2580, 0xe0a100, 0xa0522d])
   // The top-left cell is clear: a space on the terminal's default colors.
   expect(cellWords(cells, 0)).toEqual([0x20, 0x01000000, 0x01000000])
 })
@@ -124,13 +132,47 @@ test('repeated frames are drawn once', () => {
 test('the smile mirrors the frown', () => {
   // Mouth pixels of the face looking ahead: a V when done, the same turned over when failed.
   const mouth = (f: readonly string[]) => f.flatMap((row, y) => [...row].flatMap((c, x) => (c === 'm' ? [[x, y]] : [])))
-  expect(mouth(frameAt('general', 'done', 2))).toEqual([[4, 7], [6, 7], [5, 8]])
-  expect(mouth(frameAt('general', 'failed', 0))).toEqual([[5, 7], [4, 8], [6, 8]])
+  expect(mouth(frameAt('general', 'done', 2))).toEqual([[3, 5], [5, 5], [4, 6]])
+  expect(mouth(frameAt('general', 'failed', 0))).toEqual([[4, 5], [3, 6], [5, 6]])
 })
 
 test('the tear rolls down', () => {
   const tearRow = (f: readonly string[]) => f.findIndex((row) => row.includes('t'))
-  expect(framesFor('explore', 'failed').map(tearRow)).toEqual([5, 5, 6, 6, 7, 7, -1, -1])
+  expect(framesFor('explore', 'failed').map(tearRow)).toEqual([4, 4, 5, 5, 6, 6, -1, -1])
+})
+
+test('a turned face keeps the outline: no eye on the body\'s edge', () => {
+  // Looking aside, the far eye narrows instead of sliding onto the edge, where it would cut
+  // the outline and leave a tapping hand hanging off nothing.
+  const eyesAt = (f: readonly string[]) => f.flatMap((row) => [...row].flatMap((c, x) => (c === 'e' || c === 'w' ? [x] : [])))
+  for (const kind of KINDS) {
+    for (const pose of POSES) {
+      for (const frame of framesFor(kind, pose)) {
+        for (const x of eyesAt(frame)) expect(x > 1 && x < SPRITE_W - 2, `${kind}/${pose} eye at column ${x}`).toBe(true)
+      }
+    }
+  }
+  // The look still shows: the eyes sit left, then right, of where they rest.
+  const working = framesFor('general', 'working')
+  expect(Math.min(...eyesAt(working[0]!))).toBeLessThan(Math.min(...eyesAt(working[2]!)))
+  expect(eyesAt(working[0]!)).not.toEqual(eyesAt(frameAt('general', 'idle', 0)))
+})
+
+test('sparkles twinkle in both done frames, never beside a tip', () => {
+  const sides = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const
+  for (const kind of KINDS) {
+    const done = framesFor(kind, 'done')
+    for (const i of [0, 2]) {
+      const frame = done[i]!
+      const sparks = frame.flatMap((row, y) => [...row].flatMap((c, x) => (c === 'k' ? [[x, y] as const] : [])))
+      expect(sparks.length, `${kind} done ${i}`).toBeGreaterThan(0)
+      for (const [x, y] of sparks) {
+        for (const [dx, dy] of sides) expect(frame[y + dy]?.[x + dx] ?? '.', `${kind} sparkle at ${x},${y}`).not.toMatch(/[aA]/)
+      }
+    }
+    // They move between the two frames.
+    expect(done[0]!.join('/').replace(/[^k]/g, '.')).not.toBe(done[2]!.join('/').replace(/[^k]/g, '.'))
+  }
 })
 
 // WCAG contrast of two #RRGGBB colors.

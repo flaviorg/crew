@@ -1,16 +1,10 @@
 // crew's mascots: an original dome-shaped critter, one head piece per agent kind.
-// Pure data and encoders, no mods API. 11 x 10 pixels, drawn as 11 columns x 5 rows of
-// half blocks in the terminal (Raster) and as an animated SVG in the Desktop app.
+// Pure data and encoders, no mods API. The art is one table, ART: 9 x 8 pixels, drawn as
+// 9 columns x 4 rows of half blocks in the terminal (Raster), one row per line of an agent's
+// card, and as an animated SVG in the Desktop app.
 //
 // Pixel keys: . clear · b body · h highlight · d shade · e eye · w eye shine · m mouth
 //             c cheek · a lit tip · A dim tip · s stalk/hat · f feet · x hands · k sparkle · t tear
-
-export const SPRITE_W = 11
-export const SPRITE_H = 10
-export const SPRITE_COLUMNS = SPRITE_W
-export const SPRITE_ROWS = SPRITE_H / 2
-/** Every pose plays at this rate; poses repeat frames to go slower. */
-export const FRAME_MS = 250
 
 export type Pose = 'idle' | 'working' | 'done' | 'failed'
 export type Kind = 'general' | 'explore' | 'plan' | 'custom'
@@ -18,63 +12,125 @@ export type Frame = readonly string[]
 export type Palette = Readonly<Record<string, string>>
 
 type Head = 'antenna' | 'feelers' | 'cap' | 'sprout'
+type Pixels = ReadonlyArray<readonly [number, number]>
+
+/**
+ * The drawing at one size, part by part. Rows run from the top and may be shorter than the
+ * grid; a '.' in them leaves the pixel below as it was.
+ */
+type Art = {
+  w: number
+  h: number
+  /** The dome with its highlight and shade, the whole grid. */
+  body: readonly string[]
+  /** Each head piece over the body, T its tip (lit or dim); `droop` when failed. */
+  heads: Record<Head, { up: readonly string[]; droop: readonly string[] }>
+  /**
+   * The eyes' top row, each eye's [left column, width] by where the face looks (turned, the
+   * eye nearer the edge narrows), and the eye as rows, cut to that width.
+   */
+  eyes: {
+    y: number
+    at: Record<'left' | 'ahead' | 'right', ReadonlyArray<readonly [number, number]>>
+    open: readonly string[]
+    blink: readonly string[]
+    tired: readonly string[]
+  }
+  /** Cheeks follow the look, on the body only: a face turned aside hides the far one. */
+  cheeks: { x: readonly number[]; y: number }
+  /** The mouth's middle with the face ahead, and each mouth as offsets from it. */
+  mouth: { x: number; y: number; dot: Pixels; smile: Pixels; flat: Pixels }
+  hands: Record<'rest' | 'tapL' | 'tapR' | 'up', Pixels>
+  feet: Record<'in' | 'L' | 'R' | 'none', Pixels>
+  /** Where sparkles twinkle when done, one set per frame; they take clear pixels only. */
+  sparks: readonly [Pixels, Pixels]
+  /** The column a tear rolls down when failed, and the three rows it passes. */
+  tear: { x: number; rows: readonly [number, number, number] }
+}
+
+// The one place the size lives: every pixel the mascot places, at 9 x 8.
+const ART: Art = {
+  w: 9,
+  h: 8,
+  body: [
+    '.........',
+    '.........',
+    '..hhbbb..',
+    '.hbbbbbb.',
+    '.bbbbbbd.',
+    '.bbbbbbd.',
+    '.ddddddd.',
+    '.........',
+  ],
+  heads: {
+    antenna: { up: ['....T', '....s'], droop: ['.....T', '....s'] },
+    feelers: { up: ['.T.....T', '..s...s'], droop: ['', '.Ts...sT'] },
+    cap: { up: ['...sss', '.sssssss', '.......T'], droop: ['...sss', '.sssssss', '.......T'] },
+    sprout: { up: ['..TT.T', '....s'], droop: ['..TT.T', '....s'] },
+  },
+  eyes: {
+    y: 3,
+    at: { left: [[2, 1], [4, 2]], ahead: [[2, 2], [5, 2]], right: [[3, 2], [6, 1]] },
+    open: ['we', 'ee'],
+    blink: ['', 'ee'],
+    tired: ['dd', 'ee'],
+  },
+  cheeks: { x: [2, 6], y: 5 },
+  // A smile is a small V; the frown the same shape turned over.
+  mouth: { x: 4, y: 5, dot: [[0, 0]], smile: [[-1, 0], [0, 1], [1, 0]], flat: [[-1, 1], [0, 0], [1, 1]] },
+  hands: { rest: [[0, 5], [8, 5]], tapL: [[0, 4], [8, 5]], tapR: [[0, 5], [8, 4]], up: [[0, 2], [0, 3], [8, 2], [8, 3]] },
+  feet: { in: [[2, 7], [6, 7]], L: [[1, 7], [6, 7]], R: [[2, 7], [7, 7]], none: [] },
+  sparks: [[[0, 0], [8, 0], [5, 0]], [[0, 2], [8, 1], [3, 0]]],
+  tear: { x: 7, rows: [4, 5, 6] },
+}
+
+export const SPRITE_W = ART.w
+export const SPRITE_H = ART.h
+export const SPRITE_COLUMNS = SPRITE_W
+export const SPRITE_ROWS = SPRITE_H / 2
+/** CSS pixels per mascot pixel in the Desktop app: 9 x 8 is 36 x 32, about two lines of text. */
+export const SVG_PIXEL = 4
+/** Every pose plays at this rate; poses repeat frames to go slower. */
+export const FRAME_MS = 250
+
 type FrameSpec = {
   look?: -1 | 0 | 1
   eyes?: 'open' | 'blink' | 'tired'
-  hands?: 'rest' | 'tapL' | 'tapR' | 'up'
-  feet?: 'in' | 'L' | 'R' | 'none'
+  hands?: keyof Art['hands']
+  feet?: keyof Art['feet']
   tip?: 'on' | 'off'
   mouth?: 'dot' | 'smile' | 'flat' | 'none'
-  spark?: ReadonlyArray<readonly [number, number]>
+  /** Which set of sparkles shows, if any. */
+  spark?: 0 | 1
   droop?: boolean
-  /** The row the tear has rolled to, if one shows. */
-  tear?: 5 | 6 | 7
+  /** How far the tear has rolled, if one shows. */
+  tear?: 0 | 1 | 2
 }
 
+const isBody = (c: string | undefined) => c === 'b' || c === 'h' || c === 'd'
+const SIDES: Pixels = [[1, 0], [-1, 0], [0, 1], [0, -1]]
+
 function draw(head: Head, spec: FrameSpec): Frame {
-  const { look = 0, eyes = 'open', hands = 'rest', feet = 'in', tip = 'on', mouth = 'dot', spark = [], droop = false, tear } = spec
-  const g: string[][] = Array.from({ length: SPRITE_H }, () => Array<string>(SPRITE_W).fill('.'))
+  const { look = 0, eyes = 'open', hands = 'rest', feet = 'in', tip = 'on', mouth = 'dot', spark, droop = false, tear } = spec
+  const g: string[][] = Array.from({ length: ART.h }, (_, y) => [...(ART.body[y] ?? '').padEnd(ART.w, '.')].slice(0, ART.w))
   const set = (x: number, y: number, c: string) => {
-    if (x >= 0 && x < SPRITE_W && y >= 0 && y < SPRITE_H) g[y]![x] = c
+    if (x >= 0 && x < ART.w && y >= 0 && y < ART.h) g[y]![x] = c
   }
-  const T = tip === 'on' ? 'a' : 'A'
-  if (head === 'antenna') {
-    if (droop) { set(6, 0, T); set(6, 1, 's') } else { set(5, 0, T); set(5, 1, 's') }
-  }
-  if (head === 'feelers') { set(2, 0, T); set(8, 0, T); set(3, 1, 's'); set(7, 1, 's') }
-  if (head === 'cap') {
-    for (let x = 2; x <= 8; x++) set(x, 1, 's')
-    set(4, 0, 's'); set(5, 0, 's'); set(6, 0, 's'); set(9, 1, 's'); set(9, 2, T)
-  }
-  if (head === 'sprout') { set(5, 1, 's'); set(3, 0, T); set(4, 0, T); set(6, 0, T) }
-  // the dome
-  for (let x = 3; x <= 7; x++) set(x, 2, 'b')
-  for (let x = 2; x <= 8; x++) set(x, 3, 'b')
-  for (let y = 4; y <= 7; y++) for (let x = 1; x <= 9; x++) set(x, y, 'b')
-  for (let x = 2; x <= 8; x++) set(x, 8, 'd')
-  set(3, 2, 'h'); set(4, 2, 'h'); set(2, 3, 'h'); set(1, 4, 'h')
-  set(9, 6, 'd'); set(9, 7, 'd'); set(8, 7, 'd')
+  const stamp = (rows: readonly string[], x0: number, y0: number) =>
+    rows.forEach((row, dy) => [...row].forEach((c, dx) => c !== '.' && set(x0 + dx, y0 + dy, c === 'T' ? (tip === 'on' ? 'a' : 'A') : c)))
+  stamp(ART.heads[head][droop ? 'droop' : 'up'], 0, 0)
   // the face turns with `look`
-  for (const x of [3 + look, 6 + look]) {
-    if (eyes === 'open') { set(x, 5, 'w'); set(x + 1, 5, 'e'); set(x, 6, 'e'); set(x + 1, 6, 'e') }
-    if (eyes === 'blink') { set(x, 6, 'e'); set(x + 1, 6, 'e') }
-    if (eyes === 'tired') { set(x, 5, 'd'); set(x + 1, 5, 'd'); set(x, 6, 'e'); set(x + 1, 6, 'e') }
+  for (const [x, w] of ART.eyes.at[look < 0 ? 'left' : look > 0 ? 'right' : 'ahead']) {
+    stamp(ART.eyes[eyes].map((row) => row.slice(0, w)), x, ART.eyes.y)
   }
-  set(2 + look, 7, 'c'); set(8 + look, 7, 'c')
-  const mx = 5 + look
-  if (mouth === 'dot') set(mx, 7, 'm')
-  // A smile is a small V; the frown the same shape turned over.
-  if (mouth === 'smile') { set(mx - 1, 7, 'm'); set(mx, 8, 'm'); set(mx + 1, 7, 'm') }
-  if (mouth === 'flat') { set(mx - 1, 8, 'm'); set(mx, 7, 'm'); set(mx + 1, 8, 'm') }
-  if (hands === 'rest') { set(0, 7, 'x'); set(10, 7, 'x') }
-  if (hands === 'tapL') { set(0, 6, 'x'); set(10, 7, 'x') }
-  if (hands === 'tapR') { set(0, 7, 'x'); set(10, 6, 'x') }
-  if (hands === 'up') { set(0, 3, 'x'); set(0, 4, 'x'); set(10, 3, 'x'); set(10, 4, 'x') }
-  if (feet === 'in') { set(3, 9, 'f'); set(7, 9, 'f') }
-  if (feet === 'L') { set(2, 9, 'f'); set(7, 9, 'f') }
-  if (feet === 'R') { set(3, 9, 'f'); set(8, 9, 'f') }
-  for (const [x, y] of spark) if (g[y]?.[x] === '.') g[y]![x] = 'k'
-  if (tear !== undefined) set(9, tear, 't')
+  for (const x of ART.cheeks.x) if (isBody(g[ART.cheeks.y]?.[x + look])) set(x + look, ART.cheeks.y, 'c')
+  if (mouth !== 'none') for (const [dx, dy] of ART.mouth[mouth]) set(ART.mouth.x + look + dx, ART.mouth.y + dy, 'm')
+  for (const [x, y] of ART.hands[hands]) set(x, y, 'x')
+  for (const [x, y] of ART.feet[feet]) set(x, y, 'f')
+  // A sparkle beside a tip, the same gold, would read as a bigger tip: it skips that spot.
+  const byTip = (x: number, y: number) => SIDES.some(([dx, dy]) => /[aA]/.test(g[y + dy]?.[x + dx] ?? ''))
+  if (spark !== undefined) for (const [x, y] of ART.sparks[spark]) if (g[y]?.[x] === '.' && !byTip(x, y)) set(x, y, 'k')
+  if (tear !== undefined) set(ART.tear.x, ART.tear.rows[tear], 't')
   return g.map((row) => row.join(''))
 }
 
@@ -83,10 +139,10 @@ const HEADS: Record<Kind, Head> = { general: 'antenna', explore: 'feelers', plan
 function posesOf(head: Head): Record<Pose, Frame[]> {
   const f = (spec: FrameSpec = {}) => draw(head, spec)
   const rest = f()
-  const done1 = f({ hands: 'up', mouth: 'smile', feet: 'none', spark: [[0, 0], [10, 1], [1, 2]] })
-  const done2 = f({ hands: 'rest', mouth: 'smile', spark: [[1, 0], [9, 0], [10, 3]] })
-  const sad = (tear?: 5 | 6 | 7) => f({ eyes: 'tired', mouth: 'flat', droop: true, tip: 'off', tear })
-  const [sad5, sad6, sad7, dry] = [sad(5), sad(6), sad(7), sad()]
+  const done1 = f({ hands: 'up', mouth: 'smile', feet: 'none', spark: 0 })
+  const done2 = f({ hands: 'rest', mouth: 'smile', spark: 1 })
+  const sad = (tear?: 0 | 1 | 2) => f({ eyes: 'tired', mouth: 'flat', droop: true, tip: 'off', tear })
+  const [sad0, sad1, sad2, dry] = [sad(0), sad(1), sad(2), sad()]
   return {
     // 2 s loop with one blink
     idle: [rest, rest, rest, rest, rest, f({ eyes: 'blink' }), rest, rest],
@@ -100,16 +156,17 @@ function posesOf(head: Head): Record<Pose, Frame[]> {
     // throws its hands up and cheers, sparkles twinkle
     done: [done1, done1, done2, done2],
     // grey and drooping; a tear rolls down, then another
-    failed: [sad5, sad5, sad6, sad6, sad7, sad7, dry, dry],
+    failed: [sad0, sad0, sad1, sad1, sad2, sad2, dry, dry],
   }
 }
 
 const POSES: Record<Kind, Record<Pose, Frame[]>> = {
-  general: posesOf('antenna'),
-  explore: posesOf('feelers'),
-  plan: posesOf('cap'),
-  custom: posesOf('sprout'),
+  general: posesOf(HEADS.general),
+  explore: posesOf(HEADS.explore),
+  plan: posesOf(HEADS.plan),
+  custom: posesOf(HEADS.custom),
 }
+
 
 /** The frames of one kind in one pose, each SPRITE_H rows of SPRITE_W characters. */
 export function framesFor(kind: Kind, pose: Pose): readonly Frame[] {
@@ -248,7 +305,7 @@ function paths(frame: Frame, palette: Palette): string {
  * The pose as one self-animating SVG (SMIL, discrete frames at FRAME_MS), for surfaces that
  * draw `Svg` with `isInteractive: true`. A single frame when the pose has one distinct frame.
  */
-export function spriteSvg(kind: Kind, pose: Pose, palette: Palette, pixel = 4): string {
+export function spriteSvg(kind: Kind, pose: Pose, palette: Palette, pixel = SVG_PIXEL): string {
   const frames = framesFor(kind, pose)
   const n = frames.length
   const w = SPRITE_W * pixel, h = SPRITE_H * pixel

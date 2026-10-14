@@ -32,11 +32,10 @@ a list of the ones that finished — and a one-line band above the prompt while 
 ╰──────────────────╯ ╰──────────────────╯ ╰────────────────────╯
 
 RUNNING · 1
-  ▀▄   ▄▀   Scan the repo for TODO markers                     ●
-  ▄█████▄   Explore · haiku 4.5 · high · step 7 · Bash
- █████████  ━━━━━━━━━─────────────────────────────────── ctx 21%
-▀█████████▄ 207.5k tok · 12 tools · ≈$0.05 · 5:35
-  █▀▀▀▀█▀
+ ▀▄   ▄▀  Scan the repo for TODO markers                       ●
+ ▄█████▄  Explore · haiku 4.5 · high · step 7 · Bash
+▀███████▄ ━━━━━━━━━━──────────────────────────────────── ctx 21%
+ █▀▀▀▀█▀  207.5k tok · 12 tools · ≈$0.05 · 5:35
 
 FINISHED · 4                                         c: Collapse
 ✓ Review the auth module     sonnet 4.5 ·  61.7k · ≈$0.08 · 1:48
@@ -122,9 +121,10 @@ take one of four coats by name, so a glance tells most of them apart.
 
 Every pose plays at four frames a second, each agent from its own point in the loop. The
 pieces that stand on the terminal's background (head pieces, feet, tips, sparkles) keep to
-middle tones, so they show on dark and light themes alike. The pixel art is original:
-[`hooks/sprites.ts`](hooks/sprites.ts) draws every frame from a few pixel rules per head
-piece and pose.
+middle tones, so they show on dark and light themes alike. A mascot is 9 x 8 pixels: in
+the terminal, 9 columns by 4 rows, one row per line of its card; in the Desktop app, about
+two lines of text tall. The pixel art is original: [`hooks/sprites.ts`](hooks/sprites.ts)
+draws every frame from one table of parts (body, head pieces, eyes, mouth, hands, feet).
 
 ## Commands
 
@@ -222,7 +222,7 @@ A drawing has a size limit, so with many agents at once only the first ones get 
 
 ```bash
 claude plugin validate --strict .   # manifest, hooks and calls
-claude plugin test .                 # 125 tests, no session or sign-in needed
+claude plugin test .                 # 128 tests, no session or sign-in needed
 claude --plugin-dir .                # try it in a session; edits hot-reload
 ```
 

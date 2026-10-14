@@ -169,12 +169,15 @@ test('a spawn shows a card with a mascot', async ($, on) => {
     expect(await ui.find({ key: 'agent:ag-1' })).toBeDefined()
     if (surface === 'terminal') {
       const raster = await ui.find({ type: 'Raster', key: 'm:ag-1' })
-      expect(raster.props.columns).toBe(11)
-      expect(raster.props.rows).toBe(5)
+      // One row of half blocks per line of the card beside it.
+      expect(raster.props.columns).toBe(9)
+      expect(raster.props.rows).toBe(4)
     } else {
       const svg = await ui.find({ type: 'Svg' })
       expect(svg.props.isInteractive).toBe(true)
       expect(svg.props.alt).toBe('Scan the repo — working')
+      // About two lines of text tall.
+      expect([svg.props.width, svg.props.height]).toEqual([36, 32])
       expect(await ui.find({ type: 'Raster' })).toBeUndefined()
     }
     await ui.unmount()
@@ -227,9 +230,9 @@ test('steps fill tokens and the context bar', async ($, on) => {
   expect(await ui.find({ type: 'Text', text: 'ctx 21%' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^42\.6k tok · / })).toBeDefined()
   // The gauge and its label fill the text column (70 less the mascot and its margin), so
-  // the label ends under the status glyph: 50 cells of bar, 21% of them filled.
-  expect(await textOf(ui, { type: 'Text', text: /^━+$/ })).toBe('━'.repeat(Math.round(0.21 * 50)))
-  expect(await textOf(ui, { type: 'Text', text: /^─+$/ })).toHaveLength(50 - 11)
+  // the label ends under the status glyph: 52 cells of bar, 21% of them filled.
+  expect(await textOf(ui, { type: 'Text', text: /^━+$/ })).toBe('━'.repeat(Math.round(0.21 * 52)))
+  expect(await textOf(ui, { type: 'Text', text: /^─+$/ })).toHaveLength(52 - Math.round(0.21 * 52))
 })
 
 // The chunks a step's stream delivers, in order, and how it ended.
@@ -714,7 +717,7 @@ test('every line fits a narrow pane', async ($, on) => {
     // The header never wraps: the family mark stays whole, the facts are cut.
     expect(widthOf(await textOf(ui, { type: 'Text', text: /^ · \d+ running/ }))).toBeLessThanOrEqual(cols - 6)
     // Narrower than a mascot and a readable line, a card gets a dot.
-    expect(await ui.findAll({ type: 'Raster' })).toHaveLength(cols >= 28 ? 2 : 0)
+    expect(await ui.findAll({ type: 'Raster' })).toHaveLength(cols >= 26 ? 2 : 0)
     await ui.unmount()
   }
   const ui: any = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 20 }, surface: 'terminal' })
@@ -741,7 +744,7 @@ test('a docked pane keeps a column clear of the dock\'s border', async ($, on) =
     expect(root.props.paddingLeft).toBe(1)
     expect(root.props.paddingRight).toBe(1)
     expect(await cardCells(ui)).toBe(68)
-    expect(await gaugeCells(ui)).toBe(48)
+    expect(await gaugeCells(ui)).toBe(50)
     expect(needs(root)).toBeLessThanOrEqual(70)
     await ui.unmount()
     // Inline the frame has its own space: no padding, all 70 cells.
@@ -750,7 +753,7 @@ test('a docked pane keeps a column clear of the dock\'s border', async ($, on) =
     expect(root.props.paddingLeft).toBeUndefined()
     expect(root.props.paddingRight).toBeUndefined()
     expect(await cardCells(ui)).toBe(70)
-    expect(await gaugeCells(ui)).toBe(50)
+    expect(await gaugeCells(ui)).toBe(52)
     await ui.unmount()
   }
   for (const cols of [26, 30, 44]) {
