@@ -39,10 +39,10 @@ RUNNING · 1
   █▀▀▀▀█▀
 
 FINISHED · 4                                         c: Collapse
-✓ Review the auth module      sonnet 4.5 · 61.7k · ≈$0.08 · 1:48
+✓ Review the auth module     sonnet 4.5 ·  61.7k · ≈$0.08 · 1:48
 ✗ Run the flaky tests        sonnet 4.5 · 118.4k · ≈$0.12 · 4:51
-✓ Draft the migration plan      opus 5.5 · 88.1k · ≈$0.29 · 3:02
-✓ Map the API routes           haiku 4.5 · 52.0k · ≈$0.02 · 2:10
+✓ Draft the migration plan   opus 5.5   ·  88.1k · ≈$0.29 · 3:02
+✓ Map the API routes         haiku 4.5  ·  52.0k · ≈$0.02 · 2:10
 ```
 
 *(In the terminal the mascot is drawn in full color, two pixels per cell. The Session cost card here
@@ -81,7 +81,8 @@ Then start a new session, or run `/reload-plugins`. Crew is also listed in my
   the title as just finished (`RUNNING · 1 · JUST FINISHED · 2`), then moves on.
   Past 30 cards, one line says how many more run. When nothing runs, the idle mascot is
   back with a line saying so.
-- **Finished** — newest first, with `✓`, `✗` or `■`, the model, tokens, cost and time.
+- **Finished** — newest first, with `✓`, `✗` or `■`, the model, tokens, cost and time, set
+  out as a table: the columns line up from row to row.
   Its `c: Collapse` button folds it and `e: Expand` unfolds it (`c: Hide` and `e: Show` in
   a narrow pane); the choice sticks across sessions. Past 50 rows, one line says how many
   more.
@@ -209,7 +210,7 @@ A drawing has a size limit, so with many agents at once only the first ones get 
 
 ```bash
 claude plugin validate --strict .   # manifest, hooks and calls
-claude plugin test .                 # 115 tests, no session or sign-in needed
+claude plugin test .                 # 121 tests, no session or sign-in needed
 claude --plugin-dir .                # try it in a session; edits hot-reload
 ```
 

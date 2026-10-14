@@ -342,6 +342,26 @@ test('a finished agent celebrates, then files away', async ($, on) => {
   expect(await ui.find({ text: /◆ crew · 1 done/ })).toBeDefined()
 })
 
+test('the Finished rows are one table', async ($, on) => {
+  const s = stubs(on)
+  await spawn($, 'Scan the repo')
+  await spawn($, 'Review the auth module')
+  await step($, s, 'ag-1', { ...USAGE, input_tokens: 9_000 })
+  await step($, s, 'ag-2', { ...USAGE, input_tokens: 150_000, model: 'claude-opus-5-5' })
+  await complete($, 'ag-1')
+  await s.clock.advance(65_000)
+  await complete($, 'ag-2')
+  await s.clock.advance(3_000)
+  const ui: any = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  // Each row's right side is a Text with its three separators.
+  const rights = (await ui.findAll({ type: 'Text', text: /(·.*){3}/ })).map((x: any) => x.text)
+  expect(rights).toHaveLength(2)
+  expect(rights[0]).not.toBe(rights[1])
+  const dots = (t: string) => [...t.matchAll(/·/g)].map((m) => widthOf(t.slice(0, m.index)))
+  expect(dots(rights[0])).toEqual(dots(rights[1]))
+  expect(widthOf(rights[0])).toBe(widthOf(rights[1]))
+})
+
 test('a turn end that comes before the spawn\'s row still ends the agent', async ($, on) => {
   const s = stubs(on)
   // The agent fails on its first request, before the spawn hook has written its row.

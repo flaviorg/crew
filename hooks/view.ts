@@ -142,32 +142,59 @@ export function statsLine(a: AgentRow, now: number, usd: number | null, width = 
   return fit(parts, width)
 }
 
-function finishedParts(a: AgentRow, usd: number | null): string[] {
-  const parts = a.model !== '' ? [shortModel(a.model)] : []
-  parts.push(formatTokens(totalTokens(a.tokens)), usdOrDash(usd), elapsed(a, a.endedAt ?? a.startedAt))
-  return parts
+// The cells of a Finished row's right side, in column order: model, tokens, cost, time. The
+// model's is empty when it is not known.
+function finishedCells(a: AgentRow, usd: number | null): string[] {
+  return [
+    a.model !== '' ? shortModel(a.model) : '',
+    formatTokens(totalTokens(a.tokens)),
+    usdOrDash(usd),
+    elapsed(a, a.endedAt ?? a.startedAt),
+  ]
 }
 
-/** The right side of a Finished row: `haiku 4.5 · 52.0k · ≈$0.31 · 2:10`. */
+/** The right side of a Finished row on its own: `haiku 4.5 · 52.0k · ≈$0.31 · 2:10`. */
 export function finishedRight(a: AgentRow, usd: number | null): string {
-  return finishedParts(a, usd).join(SEP)
+  return finishedCells(a, usd).filter((c) => c !== '').join(SEP)
+}
+
+// The columns of that right side: the model flush left, the numbers flush right. Short of
+// room they go lowest `drop` first (the model, then the tokens, then the time); the cost stays.
+const FINISHED_COLUMNS: readonly { flushRight: boolean; drop?: number }[] = [
+  { flushRight: false, drop: 0 },
+  { flushRight: true, drop: 1 },
+  { flushRight: true },
+  { flushRight: true, drop: 2 },
+]
+
+/** `s` padded with spaces to `w` cells, in front when `flushRight`. */
+function pad(s: string, w: number, flushRight: boolean): string {
+  const gap = ' '.repeat(Math.max(0, w - widthOf(s)))
+  return flushRight ? gap + s : s + gap
 }
 
 /**
- * A Finished row in `width` cells: `✓ <title> <right>`. The title keeps up to 16 cells (all
- * of a shorter one): while it would get fewer, the right side drops its model, then its
- * tokens, then its time. The cost stays.
+ * The Finished rows as a table, each `✓ <title> <right>` in `width` cells. A column of the
+ * right side is as wide as its widest cell, so the `·` line up from row to row. The longest
+ * title keeps up to 16 cells (all of a shorter one): while it would get fewer, the columns
+ * drop for every row alike, the model first, then the tokens, then the time. The cost stays.
  */
-export function finishedLine(a: AgentRow, usd: number | null, width: number): { title: string; right: string } {
-  const desc = a.description || a.type
-  const want = Math.min(widthOf(desc), 16)
-  let parts = finishedParts(a, usd)
-  while (parts.length > 1 && width - 3 - widthOf(parts.join(SEP)) < want) {
-    // The model and the tokens lead the list and go first; then the time, after the cost.
-    parts = parts.length > 2 ? parts.slice(1) : parts.slice(0, 1)
+export function finishedLines(rows: readonly { a: AgentRow; usd: number | null }[], width: number): { title: string; right: string }[] {
+  const cells = rows.map(({ a, usd }) => finishedCells(a, usd))
+  // A column nothing fills (no row knows its model) takes no room, not even its separator.
+  let cols = FINISHED_COLUMNS.map((c, i) => ({ ...c, i, w: Math.max(...cells.map((r) => widthOf(r[i]!))) })).filter((c) => c.w > 0)
+  const taken = () => cols.reduce((n, c) => n + c.w, 0) + widthOf(SEP) * (cols.length - 1)
+  const want = Math.max(...rows.map(({ a }) => Math.min(widthOf(a.description || a.type), 16)))
+  // The cost has no rank and is never empty: with more than one column left, one can go.
+  while (cols.length > 1 && width - 3 - taken() < want) {
+    const gone = cols.filter((c) => c.drop !== undefined).reduce((lo, c) => (c.drop! < lo.drop! ? c : lo))
+    cols = cols.filter((c) => c !== gone)
   }
-  const right = truncate(parts.join(SEP), Math.max(0, width - 3 - Math.min(want, 6)))
-  return { title: truncate(desc, Math.max(0, width - 3 - widthOf(right))), right }
+  const room = Math.max(0, width - 3 - Math.min(want, 6))
+  return rows.map(({ a }, r) => {
+    const right = truncate(cols.map((c) => pad(cells[r]![c.i]!, c.w, c.flushRight)).join(SEP), room)
+    return { title: truncate(a.description || a.type, Math.max(0, width - 3 - widthOf(right))), right }
+  })
 }
 
 /**

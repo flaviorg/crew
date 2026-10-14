@@ -15,7 +15,7 @@ import {
   encodeCells, FRAME_MS, frameAt, kindOf, paletteFor, phaseOf, spriteSvg, SPRITE_COLUMNS, SPRITE_ROWS, type Pose,
 } from './sprites.ts'
 import {
-  ACCENT, bandFacts, bar, cards, cardsLine, ctxLabel, DOTS, EMPTY_TEXT, FINISHED_CAP, finishedLine, foldLabel, glyphOf,
+  ACCENT, bandFacts, bar, cards, cardsLine, ctxLabel, DOTS, EMPTY_TEXT, FINISHED_CAP, finishedLines, foldLabel, glyphOf,
   headerFacts, metaLine, oneLine, QUIET_TEXT, runningTitle, statsLine, truncate, widthOf, type Card,
 } from './view.ts'
 
@@ -330,10 +330,9 @@ function runningSection($: any, e: any, agents: AgentRow[], view: View) {
   ]
 }
 
-function finishedRow($: any, e: any, a: AgentRow, width: number) {
+function finishedRow($: any, e: any, a: AgentRow, { title, right }: { title: string; right: string }) {
   const { Box, Text } = $.ui.resolve(e)
   const glyph = glyphOf(a.status, 0)
-  const { title, right } = finishedLine(a, estimate(a, overrides), width)
   return Box({
     key: 'done:' + a.id,
     flexDirection: 'row',
@@ -364,7 +363,10 @@ function finishedSection($: any, e: any, done: AgentRow[], width: number) {
     ],
   })
   if (collapsed) return [head]
-  const rows = done.slice(0, FINISHED_CAP).map((a) => finishedRow($, e, a, width))
+  // The rows are laid out together, so the columns of their right sides line up.
+  const shown = done.slice(0, FINISHED_CAP)
+  const lines = finishedLines(shown.map((a) => ({ a, usd: estimate(a, overrides) })), width)
+  const rows = shown.map((a, i) => finishedRow($, e, a, lines[i]!))
   const more = done.length > FINISHED_CAP ? [Text({ dimColor: true, children: [`… ${done.length - FINISHED_CAP} more`] })] : []
   return [head, ...rows, ...more]
 }

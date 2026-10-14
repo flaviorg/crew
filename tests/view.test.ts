@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import { completed, EMPTY, run, spawned, stepped, type AgentRow } from '../hooks/roster.ts'
 import {
-  foldLabel, ACCENT, bandFacts, bar, cards, cardsLine, ctxLabel, DOTS, EMPTY_TEXT, FINISHED_CAP, finishedLine, finishedRight,
+  foldLabel, ACCENT, bandFacts, bar, cards, cardsLine, ctxLabel, DOTS, EMPTY_TEXT, FINISHED_CAP, finishedLines, finishedRight,
   fit, glyphOf, headerFacts, metaLine, oneLine, runningTitle, statsLine, truncate, widthOf,
 } from '../hooks/view.ts'
 
@@ -125,7 +125,7 @@ test('finished line', () => {
   })
   // Glyph, space, title, space, right side: exactly the width.
   const at = (w: number) => {
-    const l = finishedLine(a, 0.12, w)
+    const l = finishedLines([{ a, usd: 0.12 }], w)[0]!
     expect(2 + widthOf(l.title) + 1 + widthOf(l.right)).toBeLessThanOrEqual(w)
     return l
   }
@@ -137,7 +137,113 @@ test('finished line', () => {
   expect(at(30)).toEqual({ title: 'Run the flaky test s…', right: '≈$0.12' })
   expect(at(24).right).toBe('≈$0.12')
   // A short title needs less, so more of the right side stays.
-  expect(finishedLine({ ...a, description: 'One' }, 0.12, 30)).toEqual({ title: 'One', right: '118.4k · ≈$0.12 · 4:51' })
+  expect(finishedLines([{ a: { ...a, description: 'One' }, usd: 0.12 }], 30)[0]).toEqual({ title: 'One', right: '118.4k · ≈$0.12 · 4:51' })
+})
+
+// A finished agent for the table: a title, a model, its tokens, when it ended and its cost.
+function ended(description: string, model: string, tokens: number, endedAt: number, usd: number | null) {
+  const t = { input: tokens, output: 0, cacheRead: 0, cacheWrite: 0 }
+  return { a: row({ description, model, status: 'done', endedAt, tokens: t }), usd }
+}
+
+// Values of every width: 9.8k and 152.0k, ≈$0.04 and ≈$12.31, 0:05 and 12:10, haiku and sonnet.
+const crewRows = () => [
+  ended('Review the auth module', 'claude-haiku-4-5', 9_800, 5_000, 0.04),
+  ended('Draft the migration plan', 'claude-opus-5-5', 152_000, 730_000, 12.31),
+  ended('Map the API routes', 'claude-sonnet-4-5', 52_000, 130_000, 0.31),
+]
+
+// The cell each `·` sits in, counted with widthOf like the code does.
+function dotsOf(s: string): number[] {
+  const at: number[] = []
+  let w = 0
+  for (const ch of s) {
+    if (ch === '·') at.push(w)
+    w += widthOf(ch)
+  }
+  return at
+}
+
+test('finished rows line up as columns', () => {
+  const lines = finishedLines(crewRows(), 70)
+  // The model flush left, the numbers flush right, each column as wide as its widest cell.
+  expect(lines.map((l) => l.right)).toEqual([
+    'haiku 4.5  ·   9.8k ·  ≈$0.04 ·  0:05',
+    'opus 5.5   · 152.0k · ≈$12.31 · 12:10',
+    'sonnet 4.5 ·  52.0k ·  ≈$0.31 ·  2:10',
+  ])
+  // Titles stay on the left, and are cut only when the table leaves them too little.
+  expect(lines.map((l) => l.title)).toEqual(['Review the auth module', 'Draft the migration plan', 'Map the API routes'])
+  expect(finishedLines(crewRows(), 60).map((l) => l.title)).toEqual(['Review the auth mod…', 'Draft the migration…', 'Map the API routes'])
+  // Drawn as the pane does (glyph, title, gap, right side flush right), every · is in the same
+  // cell on every row, and so is the end of every row.
+  for (const width of [70, 60, 56]) {
+    const drawn = finishedLines(crewRows(), width).map(({ title, right }) => {
+      const gap = ' '.repeat(width - 3 - widthOf(title) - widthOf(right))
+      return '✓ ' + title + gap + ' ' + right
+    })
+    const dots = dotsOf(drawn[0]!)
+    expect(dots).toHaveLength(3)
+    for (const line of drawn) {
+      expect(dotsOf(line)).toEqual(dots)
+      expect(widthOf(line)).toBe(width)
+    }
+  }
+})
+
+test('finished rows drop the same columns, the model first, then the tokens, then the time', () => {
+  const rights = (w: number) => finishedLines(crewRows(), w).map((l) => l.right)
+  // The longest title keeps 16 cells: 3 for the glyph and the spaces, 37 for the table.
+  expect(rights(56)[1]).toBe('opus 5.5   · 152.0k · ≈$12.31 · 12:10')
+  expect(rights(55)).toEqual(['  9.8k ·  ≈$0.04 ·  0:05', '152.0k · ≈$12.31 · 12:10', ' 52.0k ·  ≈$0.31 ·  2:10'])
+  expect(rights(43)[1]).toBe('152.0k · ≈$12.31 · 12:10')
+  expect(rights(42)).toEqual([' ≈$0.04 ·  0:05', '≈$12.31 · 12:10', ' ≈$0.31 ·  2:10'])
+  expect(rights(34)[1]).toBe('≈$12.31 · 12:10')
+  expect(rights(33)).toEqual([' ≈$0.04', '≈$12.31', ' ≈$0.31'])
+  expect(rights(20)[1]).toBe('≈$12.31')
+
+  // Nothing is wider than the pane, the rows share one width, and what goes goes in order.
+  for (let w = 3; w <= 90; w++) {
+    const lines = finishedLines(crewRows(), w)
+    for (const l of lines) expect(2 + widthOf(l.title) + 1 + widthOf(l.right)).toBeLessThanOrEqual(w)
+    expect(new Set(lines.map((l) => widthOf(l.right))).size).toBe(1)
+    expect(new Set(lines.map((l) => dotsOf(l.right).join())).size).toBe(1)
+    if (w < 16) continue // narrower than this even the cost is cut
+    const has = (s: string) => lines[1]!.right.includes(s)
+    const kept = { model: has('opus'), tokens: has('152.0k'), cost: has('$12.31'), time: has('12:10') }
+    expect(kept.cost).toBe(true)
+    if (kept.model) expect(kept.tokens).toBe(true)
+    if (kept.tokens) expect(kept.time).toBe(true)
+  }
+})
+
+test('a short title does not keep a column the longest title has to give up', () => {
+  const pair = [ended('One', 'claude-haiku-4-5', 9_800, 5_000, 0.04), crewRows()[1]!]
+  // Alone, the short title would leave room for the model at 54 cells; beside the other it does not.
+  expect(finishedLines([pair[0]!], 54)[0]!.right).toStartWith('haiku 4.5 · ')
+  const lines = finishedLines(pair, 54)
+  expect(lines.map((l) => l.right)).toEqual(['  9.8k ·  ≈$0.04 ·  0:05', '152.0k · ≈$12.31 · 12:10'])
+  expect(lines[0]!.title).toBe('One')
+  expect(finishedLines(pair, 55)[0]!.right).toStartWith('haiku 4.5 · ')
+})
+
+test('finished rows without a model leave its column blank, or leave it out', () => {
+  // One row has no model: the others keep theirs, and its cell is blank.
+  const mixed = finishedLines([ended('A', 'claude-haiku-4-5', 9_800, 5_000, 0.04), ended('B', '', 52_000, 130_000, null)], 60)
+  expect(mixed.map((l) => l.right)).toEqual(['haiku 4.5 ·  9.8k · ≈$0.04 · 0:05', '          · 52.0k ·      — · 2:10'])
+  expect(dotsOf(mixed[1]!.right)).toEqual(dotsOf(mixed[0]!.right))
+  // None has one: no blank column, no stray ·.
+  const none = finishedLines([ended('A', '', 9_800, 5_000, 0.04), ended('B', '', 152_000, 730_000, 12.31)], 60)
+  expect(none.map((l) => l.right)).toEqual(['  9.8k ·  ≈$0.04 ·  0:05', '152.0k · ≈$12.31 · 12:10'])
+  expect(finishedLines([], 60)).toEqual([])
+})
+
+test('finished columns are padded by cells, not characters', () => {
+  // Three characters, six cells: the pad is what makes the · line up.
+  const lines = finishedLines([ended('A', 'モデル', 9_800, 5_000, 0.04), ended('B', 'claude-haiku-4-5', 52_000, 130_000, 0.31)], 70)
+  expect(widthOf(lines[0]!.right)).toBe(widthOf(lines[1]!.right))
+  expect(dotsOf(lines[0]!.right)).toEqual(dotsOf(lines[1]!.right))
+  expect(lines[0]!.right).toStartWith('モデル    · ')
 })
 
 test('cards', () => {
